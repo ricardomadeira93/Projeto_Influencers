@@ -18,7 +18,7 @@ export const landingPages: LandingPage[] = [
     description: "Turn long coding tutorials into punchy split-screen shorts with captions in minutes.",
     h1: "Convert Coding Tutorials Into Shorts Fast",
     intro:
-      "SplitShorts helps coding creators cut one long tutorial into vertical clips with webcam + screen layouts and readable captions.",
+      "macet.ai helps coding creators cut one long tutorial into vertical clips with webcam + screen layouts and readable captions.",
     bullets: [
       "Detect high-value teaching moments from transcript",
       "Keep webcam context while showing code on screen",
@@ -27,7 +27,7 @@ export const landingPages: LandingPage[] = [
     faqs: [
       {
         q: "Can I keep both facecam and code visible in one short?",
-        a: "Yes. SplitShorts uses a split-screen layout so the webcam and screen recording appear together in a vertical frame."
+        a: "Yes. macet.ai uses a split-screen layout so the webcam and screen recording appear together in a vertical frame."
       },
       {
         q: "Do I need manual editing software?",
@@ -74,7 +74,7 @@ export const landingPages: LandingPage[] = [
     faqs: [
       {
         q: "Do you publish directly to TikTok?",
-        a: "In MVP, SplitShorts provides a publish pack for manual posting and opens platform upload pages."
+        a: "In MVP, macet.ai provides a publish pack for manual posting and opens platform upload pages."
       },
       {
         q: "Can I reuse one OBS file for multiple clips?",
@@ -88,7 +88,7 @@ export const landingPages: LandingPage[] = [
     title: "Webcam Overlay to Split Screen",
     description: "Transform webcam-overlay tutorials into clean split-screen shorts with manual crop control.",
     h1: "Convert Webcam Overlay Videos to Split-Screen Shorts",
-    intro: "If your tutorials already include webcam overlay, SplitShorts helps you crop and place it for vertical output.",
+    intro: "If your tutorials already include webcam overlay, macet.ai helps you crop and place it for vertical output.",
     bullets: [
       "Manual webcam crop values for precise framing",
       "Top webcam / bottom screen layout",
@@ -143,7 +143,7 @@ export const landingPages: LandingPage[] = [
     faqs: [
       {
         q: "Can this help me post React tips daily?",
-        a: "Yes. SplitShorts is designed to produce multiple postable clips from one longer tutorial."
+        a: "Yes. macet.ai is designed to produce multiple postable clips from one longer tutorial."
       },
       {
         q: "Are hashtags included in output?",
@@ -272,7 +272,7 @@ export const landingPages: LandingPage[] = [
     title: "Tutorial Repurposing Tool",
     description: "Repurpose tutorial videos into short-form assets with less editing overhead.",
     h1: "Tutorial Repurposing Tool for Consistent Posting",
-    intro: "SplitShorts helps creators post more by converting one tutorial into many short, captioned clips.",
+    intro: "macet.ai helps creators post more by converting one tutorial into many short, captioned clips.",
     bullets: [
       "Reduce time from recording to publish",
       "Get clip, title, description, and hashtag suggestions",

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { absoluteUrl, siteConfig } from "@/lib/seo/site";
+import { getServerLocale } from "@/lib/i18n/server";
+import { t } from "@/lib/i18n/shared";
 
 export const metadata: Metadata = {
   title: siteConfig.defaultTitle,
@@ -29,19 +31,40 @@ export const metadata: Metadata = {
 const homeFaqs = [
   {
     q: "Can I generate clips from one long tutorial video?",
-    a: "Yes. Upload one source file and SplitShorts suggests multiple segments to export as vertical clips."
+    a: "Yes. Upload one source file and macet.ai suggests multiple segments to export as vertical clips."
   },
   {
     q: "Do I need advanced editing skills?",
     a: "No. The workflow is built for creators who want fast output with minimal timeline work."
   },
   {
-    q: "Does SplitShorts include captions and metadata?",
+    q: "Does macet.ai include captions and metadata?",
     a: "Yes. Exports include burned captions and a metadata pack with title, description, hook, and hashtags."
   }
 ];
 
 export default function MarketingHomePage() {
+  const locale = getServerLocale();
+  const builtForItems = [1, 2, 3, 4].map((n) => t(locale, `marketing.builtFor${n}`));
+  const features = [1, 2, 3, 4].map((n) => [t(locale, `marketing.feature${n}Title`), t(locale, `marketing.feature${n}Body`)] as const);
+  const quotes = [1, 2, 3].map((n) => t(locale, `marketing.quote${n}`));
+  const homeFaqsLocalized = locale === "pt"
+    ? [
+        {
+          q: "Posso gerar clipes a partir de um vídeo longo de tutorial?",
+          a: "Sim. Envie um arquivo de origem e o macet.ai sugere vários segmentos para exportar como clipes verticais."
+        },
+        {
+          q: "Preciso ter edição avançada?",
+          a: "Não. O fluxo foi feito para criadores que querem saída rápida com pouco trabalho de timeline."
+        },
+        {
+          q: "O macet.ai inclui legendas e metadados?",
+          a: "Sim. Os exports incluem legendas e um pacote com título, descrição, gancho e hashtags."
+        }
+      ]
+    : homeFaqs;
+
   return (
     <main className="space-y-12">
       <SoftwareApplicationJsonLd
@@ -50,29 +73,29 @@ export default function MarketingHomePage() {
         url={absoluteUrl("/")}
         offers={{ price: "0", priceCurrency: "USD" }}
       />
-      <FaqPageJsonLd faqs={homeFaqs} />
+      <FaqPageJsonLd faqs={homeFaqsLocalized} />
 
       <section className="space-y-6">
-        <Badge variant="secondary">AI video repurposing for tutorial creators</Badge>
-        <h1>Create short-form clips from one tutorial recording.</h1>
+        <Badge variant="secondary">{t(locale, "marketing.badge")}</Badge>
+        <h1>{t(locale, "marketing.heroTitle")}</h1>
         <p className="max-w-2xl text-base text-muted-foreground md:text-lg">
-          SplitShorts helps coding tutors, educators, and product teams convert long recordings into vertical split-screen clips with captions and publishing metadata.
+          {t(locale, "marketing.heroBody")}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button asChild size="lg">
-            <Link href="/dashboard">Start free</Link>
+            <Link href="/dashboard">{t(locale, "marketing.ctaPrimary")}</Link>
           </Button>
           <Button asChild size="lg" variant="secondary">
-            <Link href="/use-cases">See how it works</Link>
+            <Link href="/use-cases">{t(locale, "marketing.ctaSecondary")}</Link>
           </Button>
         </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
         {[
-          ["1. Upload", "Add one webcam + screen recording."],
-          ["2. AI selects moments", "Find high-value tutorial segments."],
-          ["3. Export", "Download clips and metadata pack."]
+          [t(locale, "marketing.step1Title"), t(locale, "marketing.step1Body")],
+          [t(locale, "marketing.step2Title"), t(locale, "marketing.step2Body")],
+          [t(locale, "marketing.step3Title"), t(locale, "marketing.step3Body")]
         ].map(([title, body]) => (
           <Card key={title}>
             <CardHeader>
@@ -87,16 +110,16 @@ export default function MarketingHomePage() {
 
       <section className="space-y-4">
         <div>
-          <h2>Built for</h2>
-          <p className="text-sm text-muted-foreground">Use-case pages for specific creator workflows.</p>
+          <h2>{t(locale, "marketing.builtForTitle")}</h2>
+          <p className="text-sm text-muted-foreground">{t(locale, "marketing.builtForBody")}</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {["Coding creators", "Dev tutors", "Course educators", "SaaS demo teams"].map((item) => (
+          {builtForItems.map((item) => (
             <Card key={item}>
               <CardContent className="flex items-center justify-between py-5">
                 <p className="font-medium">{item}</p>
                 <Button asChild variant="ghost" size="sm">
-                  <Link href="/use-cases">Open</Link>
+                  <Link href="/use-cases">{t(locale, "marketing.open")}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -105,12 +128,7 @@ export default function MarketingHomePage() {
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
-        {[
-          ["Split-screen layout", "Show webcam context and screen detail in one 9:16 clip."],
-          ["Auto captions", "Burned captions improve clarity and retention."],
-          ["AI clip suggestions", "Find moments worth posting without manual scrubbing."],
-          ["Publish pack", "Copy title, hooks, and hashtags for each platform."]
-        ].map(([title, body]) => (
+        {features.map(([title, body]) => (
           <Card key={title}>
             <CardHeader>
               <CardTitle className="text-lg">{title}</CardTitle>
@@ -123,13 +141,9 @@ export default function MarketingHomePage() {
       </section>
 
       <section className="space-y-4">
-        <h2>Trusted by early creators</h2>
+        <h2>{t(locale, "marketing.trustedTitle")}</h2>
         <div className="grid gap-3 md:grid-cols-3">
-          {[
-            "Weekly output doubled with one recording workflow.",
-            "Our tutorial team now ships clips the same day.",
-            "Metadata pack removed posting bottlenecks."
-          ].map((quote) => (
+          {quotes.map((quote) => (
             <Card key={quote}>
               <CardContent className="space-y-2 py-5">
                 <p className="text-sm">★★★★★</p>
@@ -141,9 +155,9 @@ export default function MarketingHomePage() {
       </section>
 
       <section>
-        <h2 className="mb-3">FAQ</h2>
+        <h2 className="mb-3">{t(locale, "marketing.faqTitle")}</h2>
         <Accordion type="single" collapsible className="rounded-lg border px-4">
-          {homeFaqs.map((faq) => (
+          {homeFaqsLocalized.map((faq) => (
             <AccordionItem key={faq.q} value={faq.q}>
               <AccordionTrigger>{faq.q}</AccordionTrigger>
               <AccordionContent>{faq.a}</AccordionContent>
@@ -154,12 +168,12 @@ export default function MarketingHomePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Ready to ship your next tutorial clip batch?</CardTitle>
-          <CardDescription>Start with one recording and export your first short in minutes.</CardDescription>
+          <CardTitle>{t(locale, "marketing.readyTitle")}</CardTitle>
+          <CardDescription>{t(locale, "marketing.readyBody")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button asChild>
-            <Link href="/dashboard">Start free</Link>
+            <Link href="/dashboard">{t(locale, "marketing.ctaPrimary")}</Link>
           </Button>
         </CardContent>
       </Card>

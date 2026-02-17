@@ -28,10 +28,10 @@ export default function OpenGraphImage() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ fontSize: 66, fontWeight: 800, lineHeight: 1.04 }}>
-            Split-screen tutorial clips in minutes.
+            Clips de tutorial em minutos.
           </div>
           <div style={{ fontSize: 32, color: "#5d646d" }}>
-            Upload once. Export vertical shorts with captions.
+            Envie uma vez. Exporte shorts verticais com legendas.
           </div>
         </div>
       </div>

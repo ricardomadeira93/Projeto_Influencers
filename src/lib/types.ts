@@ -14,6 +14,7 @@ export type CropConfig = {
   height: number;
   layout: "TOP_WEBCAM_BOTTOM_SCREEN";
   captionPreset: "BOLD" | "CLEAN";
+  outputPreset: "INSTAGRAM_REELS" | "YOUTUBE_SHORTS" | "TIKTOK" | "INSTAGRAM_FEED";
 };
 
 export type ClipSuggestion = {

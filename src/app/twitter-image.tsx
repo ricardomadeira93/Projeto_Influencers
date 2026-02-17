@@ -27,10 +27,10 @@ export default function TwitterImage() {
           {siteConfig.siteName}
         </div>
         <div style={{ marginTop: 18, fontSize: 58, fontWeight: 800, lineHeight: 1.05 }}>
-          Tutorial videos to short-form clips.
+          De tutorial longo para clipes curtos.
         </div>
         <div style={{ marginTop: 16, fontSize: 30, opacity: 0.9 }}>
-          Split-screen layout + captions + publish pack
+          Layout vertical + legendas + pacote de publicação
         </div>
       </div>
     ),

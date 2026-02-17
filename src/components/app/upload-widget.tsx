@@ -8,10 +8,25 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { useLanguage } from "@/components/app/language-provider";
 
 type UploadWidgetProps = {
   onUploaded: () => Promise<void> | void;
 };
+
+async function readJsonSafe(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text();
+  if (!raw) return {};
+  if (!contentType.includes("application/json")) {
+    return { error: `Resposta inválida do servidor (${response.status}).` };
+  }
+  try {
+    return JSON.parse(raw) as Record<string, any>;
+  } catch {
+    return { error: `Resposta JSON inválida do servidor (${response.status}).` };
+  }
+}
 
 async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabaseBrowser.auth.getSession();
@@ -20,6 +35,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 export function UploadWidget({ onUploaded }: UploadWidgetProps) {
+  const { tr } = useLanguage();
   const [file, setFile] = useState<File | null>(null);
   const [durationSec, setDurationSec] = useState<number | null>(null);
   const [durationDetected, setDurationDetected] = useState(false);
@@ -37,7 +53,7 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
       video.src = objectUrl;
       const duration = await new Promise<number>((resolve, reject) => {
         video.onloadedmetadata = () => resolve(video.duration);
-        video.onerror = () => reject(new Error("Could not read video metadata"));
+        video.onerror = () => reject(new Error(tr("upload.metadataError")));
       });
       const seconds = Math.max(1, Math.round(duration));
       setDurationSec(seconds);
@@ -60,7 +76,7 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
 
     setUploading(true);
     setProgress(10);
-    setMessage("Preparing upload...");
+    setMessage(tr("upload.preparing"));
 
     try {
       const sign = await fetch("/api/upload/sign", {
@@ -68,10 +84,10 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ filename: file.name, durationSec })
       });
-      const signData = await sign.json();
-      if (!sign.ok) throw new Error(signData.error || "Could not sign upload");
+      const signData = await readJsonSafe(sign);
+      if (!sign.ok) throw new Error(signData.error || tr("upload.signError"));
 
-      setMessage("Uploading video...");
+      setMessage(tr("upload.uploading"));
       const xhr = new XMLHttpRequest();
       xhrRef.current = xhr;
 
@@ -87,8 +103,8 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
         xhr.onload = () =>
           xhr.status >= 200 && xhr.status < 300
             ? resolve()
-            : reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText || "unknown error"}`));
-        xhr.onerror = () => reject(new Error("Upload failed"));
+            : reject(new Error(`${tr("upload.uploadFailed")} (${xhr.status}): ${xhr.responseText || tr("upload.unknownError")}`));
+        xhr.onerror = () => reject(new Error(tr("upload.uploadFailed")));
         xhr.send(file);
       });
 
@@ -98,17 +114,17 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
         body: JSON.stringify({ status: "UPLOADED" }),
         cache: "no-store"
       });
-      const markUploadedData = await markUploaded.json().catch(() => ({}));
+      const markUploadedData = await readJsonSafe(markUploaded);
       if (!markUploaded.ok) {
-        throw new Error(markUploadedData.error || "Upload saved, but job status update failed");
+        throw new Error(markUploadedData.error || tr("upload.statusUpdateError"));
       }
 
       setProgress(100);
-      setMessage("Upload complete. Open the job and click Generate.");
+      setMessage(tr("upload.complete"));
       setFile(null);
       await onUploaded();
     } catch (err: any) {
-      setMessage(err.message || "Upload failed");
+      setMessage(err.message || tr("upload.uploadFailed"));
     } finally {
       setUploading(false);
       xhrRef.current = null;
@@ -118,15 +134,15 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
   function cancelUpload() {
     xhrRef.current?.abort();
     setUploading(false);
-    setMessage("Upload cancelled.");
+    setMessage(tr("upload.cancelled"));
   }
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>New video</CardTitle>
-        <CardDescription>Upload one tutorial recording to start generating clips.</CardDescription>
-      </CardHeader>
+        <CardHeader>
+        <CardTitle>{tr("upload.title")}</CardTitle>
+        <CardDescription>{tr("upload.body")}</CardDescription>
+        </CardHeader>
       <CardContent className="space-y-4">
         <div
           className={cn(
@@ -148,8 +164,8 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
           }}
         >
           <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-2 text-sm font-medium">Drag and drop your video</p>
-          <p className="text-xs text-muted-foreground">MP4 recommended. Free plan supports up to 60 total minutes.</p>
+          <p className="mt-2 text-sm font-medium">{tr("upload.dropTitle")}</p>
+          <p className="text-xs text-muted-foreground">{tr("upload.dropBody")}</p>
           <div className="mt-3">
             <Input
               type="file"
@@ -163,36 +179,36 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
                   setDurationSec(null);
                 }
               }}
-              aria-label="Choose video file"
+              aria-label={tr("upload.fileInputAria")}
             />
           </div>
         </div>
 
-        {file ? <p className="text-sm">Selected: <span className="text-muted-foreground">{file.name}</span></p> : null}
+        {file ? <p className="text-sm">{tr("upload.selected")} <span className="text-muted-foreground">{file.name}</span></p> : null}
 
         <div className="rounded-md border p-3 text-sm">
-          <p className="font-medium">Detected duration</p>
+          <p className="font-medium">{tr("upload.detectedDuration")}</p>
           <p className="mt-1 text-muted-foreground">
             {durationDetected && durationSec
-              ? `${durationSec}s (auto-detected from file metadata)`
-              : "Detecting duration from file metadata..."}
+              ? `${durationSec}s ${tr("upload.detectedFormat")}`
+              : tr("upload.detecting")}
           </p>
           {!durationDetected ? (
             <p className="mt-1 text-xs text-muted-foreground">
-              Upload is enabled once duration is detected automatically.
+              {tr("upload.detectingHelp")}
             </p>
           ) : null}
         </div>
 
-        {uploading ? <Progress value={progress} aria-label="Upload progress" /> : null}
+        {uploading ? <Progress value={progress} aria-label={tr("upload.progressAria")} /> : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={handleUpload} disabled={!file || uploading || !durationSec || !durationDetected}>
-            Upload video
+            {tr("upload.uploadVideo")}
           </Button>
           {uploading ? (
             <Button type="button" variant="secondary" onClick={cancelUpload}>
-              <X className="mr-1 h-4 w-4" /> Cancel
+              <X className="mr-1 h-4 w-4" /> {tr("upload.cancel")}
             </Button>
           ) : null}
         </div>

@@ -4,31 +4,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { landingPages } from "@/lib/seo/landing-pages";
 import { absoluteUrl } from "@/lib/seo/site";
+import { getServerLocale } from "@/lib/i18n/server";
+import { t } from "@/lib/i18n/shared";
 
 export const metadata: Metadata = {
-  title: "Use Cases",
-  description: "SEO landing pages for tutorial creators using SplitShorts.",
+  title: "Casos de uso",
+  description: "Landing pages SEO para criadores de tutoriais usando macet.ai.",
   alternates: { canonical: absoluteUrl("/use-cases") },
   openGraph: {
-    title: "SplitShorts Use Cases",
-    description: "Find the best SplitShorts workflow for your tutorial niche.",
+    title: "Casos de uso macet.ai",
+    description: "Encontre o melhor fluxo do macet.ai para o seu nicho de tutorial.",
     url: absoluteUrl("/use-cases"),
     images: [absoluteUrl("/opengraph-image")]
   },
   twitter: {
     card: "summary_large_image",
-    title: "SplitShorts Use Cases",
-    description: "Find the best SplitShorts workflow for your tutorial niche.",
+    title: "Casos de uso macet.ai",
+    description: "Encontre o melhor fluxo do macet.ai para o seu nicho de tutorial.",
     images: [absoluteUrl("/twitter-image")]
   }
 };
 
 export default function UseCasesIndexPage() {
+  const locale = getServerLocale();
   return (
     <main className="space-y-8">
       <section>
-        <h1>Use Cases</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Choose a workflow based on your content type and publishing channel.</p>
+        <h1>{t(locale, "useCases.title")}</h1>
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{t(locale, "useCases.body")}</p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
@@ -40,7 +43,7 @@ export default function UseCasesIndexPage() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="secondary">
-                <Link href={`/use-cases/${page.slug}`}>Read use case</Link>
+                <Link href={`/use-cases/${page.slug}`}>{t(locale, "useCases.readCase")}</Link>
               </Button>
             </CardContent>
           </Card>

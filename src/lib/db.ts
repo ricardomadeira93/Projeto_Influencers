@@ -16,7 +16,8 @@ export async function createJob(input: {
     width: 0.26,
     height: 0.26,
     layout: "TOP_WEBCAM_BOTTOM_SCREEN",
-    captionPreset: "BOLD"
+    captionPreset: "BOLD",
+    outputPreset: "INSTAGRAM_REELS"
   };
 
   const { data, error } = await supabaseAdmin

@@ -1,5 +1,5 @@
 {
-  "name": "splitshorts",
+  "name": "macet-ai",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -10,12 +10,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker:actions": "tsx worker/github-actions-runner.ts",
+    "worker": "tsx worker/local-worker.ts",
+    "worker:once": "tsx worker/local-worker.ts --once",
+    "worker:local": "tsx worker/local-worker.ts",
     "prisma:generate": "prisma generate",
     "prisma:studio": "prisma studio",
     "prisma:db-pull": "prisma db pull",
-    "worker": "tsx src/worker/index.ts",
-    "worker:once": "tsx src/worker/index.ts --once",
     "setup:buckets": "tsx scripts/setup-buckets.ts"
   },
   "dependencies": {
@@ -32,12 +32,13 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@supabase/supabase-js": "^2.49.1",
+    "axios": "^1.11.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "form-data": "^4.0.4",
     "lucide-react": "^0.564.0",
     "next": "14.2.25",
     "next-themes": "^0.4.6",
-    "openai": "^4.87.1",
     "pg": "^8.13.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",

@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLandingPageBySlug, landingPages } from "@/lib/seo/landing-pages";
 import { absoluteUrl } from "@/lib/seo/site";
+import { getServerLocale } from "@/lib/i18n/server";
+import { t } from "@/lib/i18n/shared";
 
 type PageProps = {
   params: { slug: string };
@@ -39,6 +41,7 @@ export function generateMetadata({ params }: PageProps): Metadata {
 
 export default function UseCasePage({ params }: PageProps) {
   const page = getLandingPageBySlug(params.slug);
+  const locale = getServerLocale();
   if (!page) notFound();
 
   return (
@@ -46,22 +49,22 @@ export default function UseCasePage({ params }: PageProps) {
       <FaqPageJsonLd faqs={page.faqs} />
 
       <section className="space-y-4">
-        <Badge variant="secondary">Use case</Badge>
+        <Badge variant="secondary">{t(locale, "useCase.badge")}</Badge>
         <h1>{page.h1}</h1>
         <p className="max-w-3xl text-muted-foreground">{page.intro}</p>
         <div className="flex flex-wrap gap-2">
           <Button asChild>
-            <Link href="/dashboard">Try SplitShorts</Link>
+            <Link href="/dashboard">{t(locale, "useCase.try")}</Link>
           </Button>
           <Button asChild variant="secondary">
-            <Link href="/use-cases">Back to all use cases</Link>
+            <Link href="/use-cases">{t(locale, "useCase.back")}</Link>
           </Button>
         </div>
       </section>
 
       <Card>
         <CardHeader>
-          <CardTitle>Why this workflow works</CardTitle>
+          <CardTitle>{t(locale, "useCase.whyWorks")}</CardTitle>
         </CardHeader>
         <CardContent>
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
@@ -74,7 +77,7 @@ export default function UseCasePage({ params }: PageProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Frequently asked questions</CardTitle>
+          <CardTitle>{t(locale, "useCase.faqTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
           <Accordion type="single" collapsible>

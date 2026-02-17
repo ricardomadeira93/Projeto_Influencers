@@ -7,12 +7,12 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { JobStatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLanguage } from "@/components/app/language-provider";
 
 type Clip = {
   clip_id: string;
@@ -29,8 +29,6 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const processingSteps = ["Transcribing", "Selecting clips", "Rendering exports"] as const;
-
 function stageLabel(stage?: string) {
   if (!stage) return "";
   return stage
@@ -40,6 +38,12 @@ function stageLabel(stage?: string) {
 }
 
 export function JobScreen({ jobId }: { jobId: string }) {
+  const { tr } = useLanguage();
+  const processingSteps = [
+    tr("job.processingSteps.transcribing"),
+    tr("job.processingSteps.selecting"),
+    tr("job.processingSteps.rendering")
+  ] as const;
   const loadSeqRef = useRef(0);
   const inFlightRef = useRef(false);
   const [status, setStatus] = useState("loading");
@@ -58,7 +62,8 @@ export function JobScreen({ jobId }: { jobId: string }) {
     width: 0.26,
     height: 0.26,
     layout: "TOP_WEBCAM_BOTTOM_SCREEN",
-    captionPreset: "BOLD"
+    captionPreset: "BOLD",
+    outputPreset: "INSTAGRAM_REELS"
   });
 
   async function load(options?: { reset?: boolean; fetchPreview?: boolean }) {
@@ -96,7 +101,9 @@ export function JobScreen({ jobId }: { jobId: string }) {
       setProcessingProgress(Number(data.job.processing_progress || 0));
       setProcessingNote(data.job.processing_note || "");
       setClips(data.exports || []);
-      if (data.job.crop_config) setCrop(data.job.crop_config);
+      if (data.job.crop_config) {
+        setCrop((prev) => ({ ...prev, ...data.job.crop_config }));
+      }
 
       if (fetchPreview) {
         const previewRes = await fetch(`/api/jobs/${jobId}/preview`, { headers: await authHeaders(), cache: "no-store" });
@@ -118,7 +125,7 @@ export function JobScreen({ jobId }: { jobId: string }) {
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify(crop)
     });
-    toast.success("Crop settings saved");
+    toast.success(tr("job.saveCrop"));
     await load();
   }
 
@@ -129,12 +136,13 @@ export function JobScreen({ jobId }: { jobId: string }) {
       width: 0.26,
       height: 0.26,
       layout: "TOP_WEBCAM_BOTTOM_SCREEN",
-      captionPreset: "BOLD"
+      captionPreset: "BOLD",
+      outputPreset: "INSTAGRAM_REELS"
     });
   }
 
   async function generate() {
-    setMessage("Queueing video...");
+    setMessage(tr("job.queueing"));
     const res = await fetch(`/api/jobs/${jobId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
@@ -142,22 +150,19 @@ export function JobScreen({ jobId }: { jobId: string }) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const errMessage =
-        data?.code === "DISPATCH_FORBIDDEN"
-          ? "Processing trigger is misconfigured (GitHub token permissions)."
-          : data.error || "Could not queue video";
+      const errMessage = data.error || tr("job.queueError");
       setMessage(errMessage);
       toast.error(errMessage);
       return;
     }
-    setMessage("Video queued for processing.");
-    toast.success("Video queued");
+    setMessage(tr("job.queued"));
+    toast.success(tr("job.queued"));
     await load();
   }
 
   function copyText(text: string, label: string) {
     navigator.clipboard.writeText(text);
-    toast.success(`${label} copied`);
+    toast.success(label);
   }
 
   useEffect(() => {
@@ -210,8 +215,8 @@ export function JobScreen({ jobId }: { jobId: string }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Video workspace</h1>
-          <p className="text-sm text-muted-foreground">Configure crop, start processing, and collect clip exports.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{tr("job.workspace")}</h1>
+          <p className="text-sm text-muted-foreground">{tr("job.workspaceBody")}</p>
         </div>
         <JobStatusBadge status={status} />
       </div>
@@ -219,8 +224,8 @@ export function JobScreen({ jobId }: { jobId: string }) {
       <div className="grid gap-6 lg:grid-cols-[1.4fr,1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Preview and crop</CardTitle>
-            <CardDescription>Set webcam crop values before generation. Use decimal values from 0 to 1.</CardDescription>
+            <CardTitle>{tr("job.previewTitle")}</CardTitle>
+            <CardDescription>{tr("job.previewBody")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-lg border bg-muted/30 p-4">
@@ -230,71 +235,75 @@ export function JobScreen({ jobId }: { jobId: string }) {
                   controls
                   preload="metadata"
                   className="w-full rounded-md bg-black"
-                  aria-label="Source video preview"
+                  aria-label={tr("job.sourcePreviewAria")}
                 />
               ) : (
                 <div className="h-44 w-full rounded-md bg-muted" />
               )}
               <p className="mt-2 text-xs text-muted-foreground">
-                Source preview helps validate framing before generating clips.
+                {tr("job.previewHelp")}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>x</Label>
-                <Input type="number" step="0.01" value={crop.x} onChange={(e) => setCrop({ ...crop, x: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-1">
-                <Label>y</Label>
-                <Input type="number" step="0.01" value={crop.y} onChange={(e) => setCrop({ ...crop, y: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-1">
-                <Label>width</Label>
-                <Input type="number" step="0.01" value={crop.width} onChange={(e) => setCrop({ ...crop, width: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-1">
-                <Label>height</Label>
-                <Input type="number" step="0.01" value={crop.height} onChange={(e) => setCrop({ ...crop, height: Number(e.target.value) })} />
-              </div>
+            <div className="space-y-1">
+              <Label>{tr("job.outputFormat")}</Label>
+              <Select
+                value={crop.outputPreset || "INSTAGRAM_REELS"}
+                onValueChange={(value) =>
+                  setCrop({
+                    ...crop,
+                    outputPreset: value as "INSTAGRAM_REELS" | "YOUTUBE_SHORTS" | "TIKTOK" | "INSTAGRAM_FEED"
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={tr("job.outputFormat")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="INSTAGRAM_REELS">{tr("job.outputPreset.instagramReels")}</SelectItem>
+                  <SelectItem value="YOUTUBE_SHORTS">{tr("job.outputPreset.youtubeShorts")}</SelectItem>
+                  <SelectItem value="TIKTOK">{tr("job.outputPreset.tiktok")}</SelectItem>
+                  <SelectItem value="INSTAGRAM_FEED">{tr("job.outputPreset.instagramFeed")}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1">
-              <Label>Caption style</Label>
+              <Label>{tr("job.captionStyle")}</Label>
               <Select value={crop.captionPreset} onValueChange={(value) => setCrop({ ...crop, captionPreset: value as "BOLD" | "CLEAN" })}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Caption style" />
+                  <SelectValue placeholder={tr("job.captionStyle")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="BOLD">Bold</SelectItem>
-                  <SelectItem value="CLEAN">Clean</SelectItem>
+                  <SelectItem value="BOLD">{tr("job.bold")}</SelectItem>
+                  <SelectItem value="CLEAN">{tr("job.clean")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={saveCrop}>Save crop</Button>
-              <Button variant="ghost" onClick={resetCrop}>Reset</Button>
-              <Button onClick={generate}><WandSparkles className="mr-2 h-4 w-4" />Generate clips</Button>
+              <Button variant="secondary" onClick={saveCrop}>{tr("job.saveCrop")}</Button>
+              <Button variant="ghost" onClick={resetCrop}>{tr("job.reset")}</Button>
+              <Button onClick={generate}><WandSparkles className="mr-2 h-4 w-4" />{tr("job.generate")}</Button>
             </div>
             {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
             {status === "FAILED" && jobError ? (
-              <p className="text-sm text-destructive">Processing failed: {jobError}</p>
+              <p className="text-sm text-destructive">{tr("job.failed")} {jobError}</p>
             ) : null}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Processing state</CardTitle>
-            <CardDescription>Pipeline steps update while the worker runs.</CardDescription>
+            <CardTitle>{tr("job.processingTitle")}</CardTitle>
+            <CardDescription>{tr("job.processingBody")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Progress value={progressValue} />
             {status === "PROCESSING" ? (
               <div className="space-y-1 text-xs text-muted-foreground">
-                <p>Current step: {stageLabel(processingStage) || "Processing"}</p>
+                <p>{tr("job.currentStep")} {stageLabel(processingStage) || tr("dashboard.processing")}</p>
                 {processingNote ? <p>{processingNote}</p> : null}
-                {refreshing ? <p>Refreshing status...</p> : null}
+                {refreshing ? <p>{tr("job.refreshing")}</p> : null}
               </div>
             ) : null}
             <ul className="space-y-2">
@@ -302,20 +311,24 @@ export function JobScreen({ jobId }: { jobId: string }) {
                 <li key={step} className="flex items-center justify-between text-sm">
                   <span>{step}</span>
                   <span className="text-muted-foreground">
-                    {stepStates[idx] === "in_progress" ? "in progress" : stepStates[idx]}
+                    {stepStates[idx] === "in_progress"
+                      ? tr("job.inProgress")
+                      : stepStates[idx] === "done"
+                        ? tr("job.doneState")
+                        : tr("job.pendingState")}
                   </span>
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground">Exports are available for 72h after completion.</p>
+            <p className="text-xs text-muted-foreground">{tr("job.available72h")}</p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Results</CardTitle>
-          <CardDescription>Download clips and copy metadata for manual posting.</CardDescription>
+          <CardTitle>{tr("job.results")}</CardTitle>
+          <CardDescription>{tr("job.resultsBody")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {loading ? (
@@ -327,28 +340,28 @@ export function JobScreen({ jobId }: { jobId: string }) {
 
           {!loading && !clips.length ? (
             <div className="rounded-md border border-dashed p-8 text-center">
-              <p className="text-sm text-muted-foreground">No clips yet. Start generation to produce exports.</p>
+              <p className="text-sm text-muted-foreground">{tr("job.noClips")}</p>
             </div>
           ) : null}
 
           {clips.map((clip) => (
             <div key={clip.clip_id} className="rounded-md border p-4">
               <div className="grid gap-4 md:grid-cols-[220px,1fr]">
-                <video src={clip.clip_url} controls className="w-full rounded-md bg-muted" aria-label={`Preview ${clip.title}`} />
+                <video src={clip.clip_url} controls className="w-full rounded-md bg-muted" aria-label={`${tr("job.clipPreviewAria")} ${clip.title}`} />
                 <div className="space-y-3">
                   <div>
                     <p className="font-semibold">{clip.title}</p>
                     <p className="text-sm text-muted-foreground">{clip.hook}</p>
                   </div>
                   <p className="text-sm text-muted-foreground">{clip.description}</p>
-                  <p className="text-xs text-muted-foreground">Available for 72h</p>
+                  <p className="text-xs text-muted-foreground">{tr("job.available72h")}</p>
                   <Separator />
                   <div className="flex flex-wrap gap-2">
                     <Button asChild size="sm">
-                      <a href={clip.clip_url} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" />Download</a>
+                      <a href={clip.clip_url} target="_blank" rel="noreferrer"><Download className="mr-2 h-4 w-4" />{tr("job.download")}</a>
                     </Button>
-                    <Button size="sm" variant="secondary" onClick={() => copyText(clip.title, "Title")}><Copy className="mr-2 h-4 w-4" />Copy title</Button>
-                    <Button size="sm" variant="secondary" onClick={() => copyText(clip.hashtags.join(" "), "Hashtags")}><Copy className="mr-2 h-4 w-4" />Copy hashtags</Button>
+                    <Button size="sm" variant="secondary" onClick={() => copyText(clip.title, tr("job.copyTitleToast"))}><Copy className="mr-2 h-4 w-4" />{tr("job.copyTitle")}</Button>
+                    <Button size="sm" variant="secondary" onClick={() => copyText(clip.hashtags.join(" "), tr("job.copyHashtagsToast"))}><Copy className="mr-2 h-4 w-4" />{tr("job.copyHashtags")}</Button>
                   </div>
                 </div>
               </div>

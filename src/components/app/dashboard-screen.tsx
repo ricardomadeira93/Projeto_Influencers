@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLanguage } from "@/components/app/language-provider";
 
 type JobListItem = {
   id: string;
@@ -23,34 +24,31 @@ type JobListItem = {
   expires_at: string;
 };
 
-async function authHeaders(): Promise<Record<string, string>> {
-  const { data } = await supabaseBrowser.auth.getSession();
-  const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export function DashboardScreen() {
+  const { tr } = useLanguage();
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [sessionLoading, setSessionLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
 
-  async function loadJobs() {
+  async function loadJobs(tokenOverride?: string | null) {
+    const token = tokenOverride ?? accessToken;
     setLoading(true);
-    const headers = await authHeaders();
-    if (!headers.Authorization) {
+    if (!token) {
       setIsAuthenticated(false);
       setJobs([]);
       setLoading(false);
       return;
     }
-    const res = await fetch("/api/jobs", { headers, cache: "no-store" });
+    const res = await fetch("/api/jobs", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
     if (res.status === 401) {
       setIsAuthenticated(false);
+      setAccessToken(null);
       setJobs([]);
       setLoading(false);
       return;
@@ -61,34 +59,53 @@ export function DashboardScreen() {
   }
 
   useEffect(() => {
-    async function bootstrapAuth() {
-      try {
-        const { data } = await supabaseBrowser.auth.getSession();
-        const hasSession = Boolean(data.session?.access_token);
-        setIsAuthenticated(hasSession);
-        if (hasSession) {
-          await loadJobs();
+    let isMounted = true;
+    const unblockTimer = setTimeout(() => {
+      if (isMounted) setSessionLoading(false);
+    }, 1200);
+
+    supabaseBrowser.auth
+      .getSession()
+      .then(async ({ data }) => {
+        if (!isMounted) return;
+        const token = data.session?.access_token ?? null;
+        setAccessToken(token);
+        setIsAuthenticated(Boolean(token));
+        if (token) {
+          await loadJobs(token);
         } else {
           setLoading(false);
         }
-      } finally {
-        setSessionLoading(false);
-      }
-    }
-
-    bootstrapAuth().catch(console.error);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setAccessToken(null);
+        setIsAuthenticated(false);
+        setLoading(false);
+      })
+      .finally(() => {
+        clearTimeout(unblockTimer);
+        if (isMounted) setSessionLoading(false);
+      });
 
     const { data: subscription } = supabaseBrowser.auth.onAuthStateChange(async (_event, session) => {
-      const hasSession = Boolean(session?.access_token);
-      setIsAuthenticated(hasSession);
-      if (hasSession) {
-        await loadJobs();
+      if (!isMounted) return;
+      const token = session?.access_token ?? null;
+      setAccessToken(token);
+      setIsAuthenticated(Boolean(token));
+      if (token) {
+        await loadJobs(token);
       } else {
         setJobs([]);
+        setLoading(false);
       }
     });
 
-    return () => subscription.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      clearTimeout(unblockTimer);
+      subscription.subscription.unsubscribe();
+    };
   }, []);
 
   async function signInWithPassword() {
@@ -100,7 +117,7 @@ export function DashboardScreen() {
       setAuthMessage(error.message);
       return;
     }
-    setAuthMessage("Signed in.");
+    setAuthMessage(tr("dashboard.signedIn"));
   }
 
   async function signUpWithPassword() {
@@ -114,7 +131,7 @@ export function DashboardScreen() {
       setAuthMessage(error.message);
       return;
     }
-    setAuthMessage("Account created. Check your email if confirmation is required.");
+    setAuthMessage(tr("dashboard.accountCreated"));
   }
 
   const filteredJobs = useMemo(() => {
@@ -130,8 +147,8 @@ export function DashboardScreen() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Loading dashboard</CardTitle>
-          <CardDescription>Checking your session.</CardDescription>
+          <CardTitle>{tr("dashboard.loadingTitle")}</CardTitle>
+          <CardDescription>{tr("dashboard.loadingBody")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-10 w-full" />
@@ -144,36 +161,36 @@ export function DashboardScreen() {
     return (
       <Card className="max-w-xl">
         <CardHeader>
-          <CardTitle>Sign in to continue</CardTitle>
+          <CardTitle>{tr("dashboard.signInTitle")}</CardTitle>
           <CardDescription>
-            The dashboard is private. Use a magic link to access your uploads, processing status, and exports.
+            {tr("dashboard.signInBody")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <Input
             type="email"
-            placeholder="you@example.com"
+            placeholder={tr("dashboard.authEmailPlaceholder")}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            aria-label="Email for magic link"
+            aria-label={tr("dashboard.authEmailAria")}
           />
           <Input
             type="password"
-            placeholder="Your password"
+            placeholder={tr("dashboard.authPasswordPlaceholder")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            aria-label="Password"
+            aria-label={tr("dashboard.authPasswordAria")}
           />
           <div className="flex flex-wrap gap-2">
             <Button onClick={signInWithPassword} disabled={!email || !password}>
-              Sign in
+              {tr("dashboard.signIn")}
             </Button>
             <Button variant="secondary" onClick={signUpWithPassword} disabled={!email || !password}>
-              Create account
+              {tr("dashboard.createAccount")}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Use email/password authentication for now. You can switch providers later in Supabase Auth settings.
+            {tr("dashboard.authHelp")}
           </p>
           {authMessage ? <p className="text-sm text-muted-foreground">{authMessage}</p> : null}
         </CardContent>
@@ -185,11 +202,11 @@ export function DashboardScreen() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Manage videos, monitor status, and generate clips.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{tr("dashboard.title")}</h1>
+          <p className="text-sm text-muted-foreground">{tr("dashboard.subtitle")}</p>
         </div>
         <Button asChild>
-          <a href="#new-video">New video</a>
+          <a href="#new-video">{tr("dashboard.newVideo")}</a>
         </Button>
       </div>
 
@@ -201,7 +218,7 @@ export function DashboardScreen() {
         <Card>
           <CardContent className="flex items-center justify-between py-5">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Total videos</p>
+              <p className="text-xs uppercase text-muted-foreground">{tr("dashboard.totalVideos")}</p>
               <p className="mt-1 text-2xl font-semibold">{jobs.length}</p>
             </div>
             <Film className="h-5 w-5 text-muted-foreground" />
@@ -210,7 +227,7 @@ export function DashboardScreen() {
         <Card>
           <CardContent className="flex items-center justify-between py-5">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Processing</p>
+              <p className="text-xs uppercase text-muted-foreground">{tr("dashboard.processing")}</p>
               <p className="mt-1 text-2xl font-semibold">{processingCount}</p>
             </div>
             <Workflow className="h-5 w-5 text-muted-foreground" />
@@ -219,7 +236,7 @@ export function DashboardScreen() {
         <Card>
           <CardContent className="flex items-center justify-between py-5">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Completed</p>
+              <p className="text-xs uppercase text-muted-foreground">{tr("dashboard.completed")}</p>
               <p className="mt-1 text-2xl font-semibold">{doneCount}</p>
             </div>
             <Timer className="h-5 w-5 text-muted-foreground" />
@@ -228,7 +245,7 @@ export function DashboardScreen() {
         <Card>
           <CardContent className="flex items-center justify-between py-5">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Failed</p>
+              <p className="text-xs uppercase text-muted-foreground">{tr("dashboard.failed")}</p>
               <p className="mt-1 text-2xl font-semibold">{failedCount}</p>
             </div>
             <Filter className="h-5 w-5 text-muted-foreground" />
@@ -238,17 +255,17 @@ export function DashboardScreen() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Video processing</CardTitle>
-          <CardDescription>Track each upload from pending to final clips.</CardDescription>
+          <CardTitle>{tr("dashboard.videoProcessing")}</CardTitle>
+          <CardDescription>{tr("dashboard.videoProcessingBody")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Tabs defaultValue="all" onValueChange={(value) => setStatusFilter(value === "all" ? "ALL" : value)}>
               <TabsList>
-                <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="PROCESSING">Processing</TabsTrigger>
-                <TabsTrigger value="DONE">Done</TabsTrigger>
-                <TabsTrigger value="FAILED">Failed</TabsTrigger>
+                <TabsTrigger value="all">{tr("dashboard.all")}</TabsTrigger>
+                <TabsTrigger value="PROCESSING">{tr("dashboard.processing")}</TabsTrigger>
+                <TabsTrigger value="DONE">{tr("dashboard.done")}</TabsTrigger>
+                <TabsTrigger value="FAILED">{tr("dashboard.failed")}</TabsTrigger>
               </TabsList>
               <TabsContent value="all" />
               <TabsContent value="PROCESSING" />
@@ -260,16 +277,16 @@ export function DashboardScreen() {
               <Filter className="h-4 w-4 text-muted-foreground" />
               <Select onValueChange={setStatusFilter} defaultValue="ALL">
                 <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Filter status" />
+                  <SelectValue placeholder={tr("dashboard.filterStatus")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">All statuses</SelectItem>
-                  <SelectItem value="PENDING">Pending</SelectItem>
-                  <SelectItem value="UPLOADED">Uploaded</SelectItem>
-                  <SelectItem value="READY_TO_PROCESS">Ready to process</SelectItem>
-                  <SelectItem value="PROCESSING">Processing</SelectItem>
-                  <SelectItem value="DONE">Done</SelectItem>
-                  <SelectItem value="FAILED">Failed</SelectItem>
+                  <SelectItem value="ALL">{tr("dashboard.allStatuses")}</SelectItem>
+                  <SelectItem value="PENDING">{tr("dashboard.pending")}</SelectItem>
+                  <SelectItem value="UPLOADED">{tr("dashboard.uploaded")}</SelectItem>
+                  <SelectItem value="READY_TO_PROCESS">{tr("dashboard.ready")}</SelectItem>
+                  <SelectItem value="PROCESSING">{tr("dashboard.processing")}</SelectItem>
+                  <SelectItem value="DONE">{tr("dashboard.done")}</SelectItem>
+                  <SelectItem value="FAILED">{tr("dashboard.failed")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -279,12 +296,12 @@ export function DashboardScreen() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[120px]">Preview</TableHead>
-                  <TableHead>File</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead className="w-[120px]">{tr("dashboard.preview")}</TableHead>
+                  <TableHead>{tr("dashboard.file")}</TableHead>
+                  <TableHead>{tr("dashboard.status")}</TableHead>
+                  <TableHead>{tr("dashboard.created")}</TableHead>
+                  <TableHead>{tr("dashboard.expires")}</TableHead>
+                  <TableHead className="text-right">{tr("dashboard.action")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -302,7 +319,7 @@ export function DashboardScreen() {
                 {!loading && !filteredJobs.length ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                      No videos found. Upload a video to create your first clip pipeline.
+                      {tr("dashboard.empty")}
                     </TableCell>
                   </TableRow>
                 ) : null}
@@ -317,7 +334,7 @@ export function DashboardScreen() {
                           muted
                           playsInline
                           className="h-16 w-24 rounded-md border bg-muted object-cover"
-                          aria-label={`Preview of ${job.source_filename}`}
+                          aria-label={`${tr("dashboard.previewAria")} ${job.source_filename}`}
                         />
                       ) : (
                         <div className="h-16 w-24 rounded-md border bg-muted" />
@@ -329,7 +346,7 @@ export function DashboardScreen() {
                     <TableCell>{new Date(job.expires_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <Button asChild variant="secondary" size="sm">
-                        <Link href={`/jobs/${job.id}`}>Open</Link>
+                        <Link href={`/jobs/${job.id}`}>{tr("dashboard.open")}</Link>
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -338,7 +355,7 @@ export function DashboardScreen() {
             </Table>
           </div>
 
-          <p className="text-xs text-muted-foreground">Currently processing: {processingCount}</p>
+          <p className="text-xs text-muted-foreground">{tr("dashboard.currentlyProcessing")} {processingCount}</p>
         </CardContent>
       </Card>
     </div>

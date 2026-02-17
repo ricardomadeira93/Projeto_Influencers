@@ -1,8 +1,8 @@
 export const siteConfig = {
-  siteName: "SplitShorts",
+  siteName: "macet.ai",
   siteUrl: process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || "http://localhost:3000",
-  defaultTitle: "SplitShorts | Turn Tutorial Videos Into Viral Split-Screen Shorts",
-  titleTemplate: "%s | SplitShorts",
+  defaultTitle: "macet.ai | Turn Tutorial Videos Into Viral Split-Screen Shorts",
+  titleTemplate: "%s | macet.ai",
   defaultDescription:
     "Convert one tutorial recording into vertical split-screen shorts with captions, clip suggestions, and ready-to-post metadata.",
   defaultOgImage: "/opengraph-image",
