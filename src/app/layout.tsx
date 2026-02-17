@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Providers } from "@/components/app/providers";
 
 export const metadata: Metadata = {
   title: "SplitShorts",
@@ -9,20 +10,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
-        <div className="container-shell">
-          <header className="mb-8 flex items-center justify-between rounded-2xl border border-black/10 bg-white/80 p-4 backdrop-blur">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-muted">SplitShorts</p>
-              <h1 className="text-xl font-bold">Tutorial-to-Shorts MVP</h1>
-            </div>
-            <a href="/dashboard" className="btn-primary">
-              Dashboard
-            </a>
-          </header>
-          {children}
-        </div>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

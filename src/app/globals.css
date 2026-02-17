@@ -1,41 +1,43 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+@import "@fontsource/inter/index.css";
+@import "../styles/theme.css";
 
-:root {
-  --bg: #fbfaf7;
-  --text: #101112;
-  --muted: #5d646d;
-  --card: #ffffff;
-  --accent: #f35b04;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Inter Variable", Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  body {
+    @apply antialiased;
+  }
+
+  h1 {
+    @apply text-4xl font-semibold tracking-tight md:text-5xl;
+  }
+
+  h2 {
+    @apply text-2xl font-semibold tracking-tight md:text-3xl;
+  }
+
+  h3 {
+    @apply text-xl font-semibold tracking-tight;
+  }
 }
 
-body {
-  background: radial-gradient(circle at 0% 0%, #fff4e8 0%, var(--bg) 38%), var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-}
+@layer components {
+  .app-container {
+    @apply mx-auto w-full max-w-[1100px] px-4 md:px-6;
+  }
 
-.container-shell {
-  @apply mx-auto max-w-6xl px-4 py-8;
-}
-
-.card {
-  @apply rounded-2xl border border-black/10 bg-white p-5 shadow-sm;
-}
-
-.btn {
-  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold transition;
-}
-
-.btn-primary {
-  @apply btn bg-accent text-white hover:bg-orange-600;
-}
-
-.btn-secondary {
-  @apply btn border border-black/20 bg-white hover:bg-black/5;
-}
-
-.input {
-  @apply w-full rounded-xl border border-black/20 bg-white px-3 py-2 text-sm;
+  .surface {
+    @apply rounded-lg border bg-card text-card-foreground shadow-sm;
+  }
 }
