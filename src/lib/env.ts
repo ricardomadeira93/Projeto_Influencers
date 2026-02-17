@@ -10,4 +10,12 @@ const envSchema = z.object({
   MAX_UPLOAD_DURATION: z.coerce.number().default(1800)
 });
 
-export const env = envSchema.parse(process.env);
+const parsed = envSchema.safeParse(process.env);
+if (!parsed.success) {
+  const messages = parsed.error.issues
+    .map((issue) => `${issue.path.join(".") || "env"}: ${issue.message}`)
+    .join("; ");
+  throw new Error(`Invalid environment configuration: ${messages}`);
+}
+
+export const env = parsed.data;
