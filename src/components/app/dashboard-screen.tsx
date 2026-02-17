@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Filter } from "lucide-react";
+import { Film, Filter, Timer, Workflow } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { UploadWidget } from "@/components/app/upload-widget";
 import { JobStatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,18 +32,65 @@ export function DashboardScreen() {
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [email, setEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
 
   async function loadJobs() {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const res = await fetch("/api/jobs", { headers: await authHeaders() });
-    const data = await res.json();
+    if (res.status === 401) {
+      setIsAuthenticated(false);
+      setJobs([]);
+      setLoading(false);
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
     if (res.ok) setJobs(data.jobs || []);
     setLoading(false);
   }
 
   useEffect(() => {
-    loadJobs().catch(console.error);
-  }, []);
+    async function bootstrapAuth() {
+      const { data } = await supabaseBrowser.auth.getSession();
+      const hasSession = Boolean(data.session?.access_token);
+      setIsAuthenticated(hasSession);
+      setSessionLoading(false);
+      if (hasSession) {
+        loadJobs().catch(console.error);
+      } else {
+        setLoading(false);
+      }
+    }
+
+    bootstrapAuth().catch(console.error);
+
+    const { data: subscription } = supabaseBrowser.auth.onAuthStateChange(async (_event, session) => {
+      const hasSession = Boolean(session?.access_token);
+      setIsAuthenticated(hasSession);
+      if (hasSession) {
+        await loadJobs();
+      } else {
+        setJobs([]);
+      }
+    });
+
+    return () => subscription.subscription.unsubscribe();
+  }, [isAuthenticated]);
+
+  async function signInWithMagicLink() {
+    const origin = window.location.origin;
+    const { error } = await supabaseBrowser.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${origin}/dashboard` }
+    });
+    setAuthMessage(error ? error.message : "Magic link sent. Check your inbox.");
+  }
 
   const filteredJobs = useMemo(() => {
     if (statusFilter === "ALL") return jobs;
@@ -50,6 +98,51 @@ export function DashboardScreen() {
   }, [jobs, statusFilter]);
 
   const processingCount = jobs.filter((j) => j.status === "PROCESSING").length;
+  const doneCount = jobs.filter((j) => j.status === "DONE").length;
+  const failedCount = jobs.filter((j) => j.status === "FAILED").length;
+
+  if (sessionLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Loading dashboard</CardTitle>
+          <CardDescription>Checking your session.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-10 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <Card className="max-w-xl">
+        <CardHeader>
+          <CardTitle>Sign in to continue</CardTitle>
+          <CardDescription>
+            The dashboard is private. Use a magic link to access your uploads, job status, and exports.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Input
+            type="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-label="Email for magic link"
+          />
+          <Button onClick={signInWithMagicLink} disabled={!email}>
+            Send magic link
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            You will be redirected back to <code>/dashboard</code> after authentication.
+          </p>
+          {authMessage ? <p className="text-sm text-muted-foreground">{authMessage}</p> : null}
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -65,6 +158,45 @@ export function DashboardScreen() {
 
       <div id="new-video">
         <UploadWidget onUploaded={loadJobs} />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <Card>
+          <CardContent className="flex items-center justify-between py-5">
+            <div>
+              <p className="text-xs uppercase text-muted-foreground">Total jobs</p>
+              <p className="mt-1 text-2xl font-semibold">{jobs.length}</p>
+            </div>
+            <Film className="h-5 w-5 text-muted-foreground" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between py-5">
+            <div>
+              <p className="text-xs uppercase text-muted-foreground">Processing</p>
+              <p className="mt-1 text-2xl font-semibold">{processingCount}</p>
+            </div>
+            <Workflow className="h-5 w-5 text-muted-foreground" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between py-5">
+            <div>
+              <p className="text-xs uppercase text-muted-foreground">Completed</p>
+              <p className="mt-1 text-2xl font-semibold">{doneCount}</p>
+            </div>
+            <Timer className="h-5 w-5 text-muted-foreground" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center justify-between py-5">
+            <div>
+              <p className="text-xs uppercase text-muted-foreground">Failed</p>
+              <p className="mt-1 text-2xl font-semibold">{failedCount}</p>
+            </div>
+            <Filter className="h-5 w-5 text-muted-foreground" />
+          </CardContent>
+        </Card>
       </div>
 
       <Card>

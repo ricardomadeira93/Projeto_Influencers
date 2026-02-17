@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWorkerAuthorized } from "@/lib/internal-worker-auth";
+import { canConsumeMinutes } from "@/lib/usage";
 
 const schema = z.object({ jobId: z.string().uuid() });
 
@@ -44,6 +45,17 @@ export async function POST(request: NextRequest) {
 
   if (otherProcessing) {
     return NextResponse.json({ error: "Another job is already PROCESSING for this user" }, { status: 409 });
+  }
+
+  const minutesNeeded = Math.ceil((job.source_duration_sec || 0) / 60);
+  if (minutesNeeded > 0) {
+    const usage = await canConsumeMinutes(job.user_id, minutesNeeded);
+    if (!usage.ok) {
+      return NextResponse.json(
+        { error: `Insufficient minutes to process this job. Remaining ${usage.remaining} min.` },
+        { status: 402 }
+      );
+    }
   }
 
   const nowIso = new Date().toISOString();

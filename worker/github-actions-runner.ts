@@ -364,6 +364,7 @@ async function main() {
       "/api/internal/worker/finish",
       {
         jobId: startData.job.id,
+        measuredDurationSec: duration,
         exports: exportsPayload
       },
       WORKER_SECRET,

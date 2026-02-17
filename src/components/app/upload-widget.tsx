@@ -5,7 +5,6 @@ import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -22,12 +21,39 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 export function UploadWidget({ onUploaded }: UploadWidgetProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [durationSec, setDurationSec] = useState(600);
+  const [durationSec, setDurationSec] = useState<number | null>(null);
+  const [durationDetected, setDurationDetected] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
   const xhrRef = useRef<XMLHttpRequest | null>(null);
+
+  async function detectDuration(inputFile: File) {
+    const objectUrl = URL.createObjectURL(inputFile);
+    try {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.src = objectUrl;
+      const duration = await new Promise<number>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve(video.duration);
+        video.onerror = () => reject(new Error("Could not read video metadata"));
+      });
+      const seconds = Math.max(1, Math.round(duration));
+      setDurationSec(seconds);
+      setDurationDetected(true);
+    } catch {
+      setDurationSec(600);
+      setDurationDetected(false);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function setFileAndDuration(nextFile: File) {
+    setFile(nextFile);
+    await detectDuration(nextFile);
+  }
 
   async function handleUpload() {
     if (!file || uploading) return;
@@ -108,7 +134,9 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
             e.preventDefault();
             setDragging(false);
             const dropped = e.dataTransfer.files?.[0];
-            if (dropped) setFile(dropped);
+            if (dropped) {
+              setFileAndDuration(dropped).catch(() => undefined);
+            }
           }}
         >
           <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
@@ -118,7 +146,15 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
             <Input
               type="file"
               accept="video/*"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const selectedFile = e.target.files?.[0];
+                if (selectedFile) {
+                  setFileAndDuration(selectedFile).catch(() => undefined);
+                } else {
+                  setFile(null);
+                  setDurationSec(null);
+                }
+              }}
               aria-label="Choose video file"
             />
           </div>
@@ -126,22 +162,26 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
 
         {file ? <p className="text-sm">Selected: <span className="text-muted-foreground">{file.name}</span></p> : null}
 
-        <div className="space-y-2">
-          <Label htmlFor="durationSec">Estimated duration (seconds)</Label>
-          <Input
-            id="durationSec"
-            type="number"
-            min={1}
-            value={durationSec}
-            onChange={(e) => setDurationSec(Number(e.target.value || 1))}
-          />
-          <p className="text-xs text-muted-foreground">Constraint: max upload duration is controlled by server policy.</p>
+        <div className="rounded-md border p-3 text-sm">
+          <p className="font-medium">Detected duration</p>
+          <p className="mt-1 text-muted-foreground">
+            {durationDetected && durationSec
+              ? `${durationSec}s (auto-detected from file metadata)`
+              : "Detecting duration from file metadata..."}
+          </p>
+          {!durationDetected ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Upload is enabled once duration is detected automatically.
+            </p>
+          ) : null}
         </div>
 
         {uploading ? <Progress value={progress} aria-label="Upload progress" /> : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={handleUpload} disabled={!file || uploading}>Upload video</Button>
+          <Button onClick={handleUpload} disabled={!file || uploading || !durationSec || !durationDetected}>
+            Upload video
+          </Button>
           {uploading ? (
             <Button type="button" variant="secondary" onClick={cancelUpload}>
               <X className="mr-1 h-4 w-4" /> Cancel

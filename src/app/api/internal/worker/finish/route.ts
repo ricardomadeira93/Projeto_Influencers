@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isWorkerAuthorized } from "@/lib/internal-worker-auth";
+import { canConsumeMinutes, consumeMinutes } from "@/lib/usage";
 
 const exportSchema = z.object({
   clipId: z.string().min(1),
@@ -16,6 +17,7 @@ const exportSchema = z.object({
 
 const bodySchema = z.object({
   jobId: z.string().uuid(),
+  measuredDurationSec: z.number().positive(),
   exports: z.array(exportSchema).max(5)
 });
 
@@ -38,6 +40,21 @@ export async function POST(request: NextRequest) {
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   if (job.status !== "PROCESSING") {
     return NextResponse.json({ error: `Job is ${job.status}, expected PROCESSING` }, { status: 409 });
+  }
+
+  const usedMinutes = Math.ceil(parsed.data.measuredDurationSec / 60);
+  const usage = await canConsumeMinutes(job.user_id, usedMinutes);
+  if (!usage.ok) {
+    await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "FAILED",
+        error_message: `Insufficient minutes. Remaining ${usage.remaining} min.`,
+        finished_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", job.id);
+    return NextResponse.json({ error: "Insufficient minutes" }, { status: 402 });
   }
 
   const exportExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
@@ -77,6 +94,7 @@ export async function POST(request: NextRequest) {
     .from("jobs")
     .update({
       status: "DONE",
+      source_duration_sec: Math.round(parsed.data.measuredDurationSec),
       finished_at: nowIso,
       expires_at: jobExpiresAt,
       updated_at: nowIso,
@@ -84,5 +102,7 @@ export async function POST(request: NextRequest) {
     })
     .eq("id", job.id);
 
-  return NextResponse.json({ ok: true, exportsCount: parsed.data.exports.length });
+  await consumeMinutes(job.user_id, usedMinutes, job.id);
+
+  return NextResponse.json({ ok: true, exportsCount: parsed.data.exports.length, usedMinutes });
 }
