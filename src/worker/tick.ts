@@ -140,6 +140,14 @@ async function withRetries<T>(label: string, fn: () => Promise<T>, attempts = 3)
 }
 
 const TRANSCRIBE_TIMEOUT_MS = 300_000;
+const DEFAULT_MAX_TRANSCRIBE_AUDIO_MB = 20;
+const DEFAULT_TRANSCRIBE_CHUNK_SECONDS = 45;
+
+function readPositiveEnvNumber(name: string, fallback: number) {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -260,21 +268,17 @@ async function updateJobFailed(jobId: string, message: string) {
 }
 
 async function transcribeAudio(audioPath: string, tmpDir: string, jobId: string) {
-  const CHUNK_SEC = 30;
-  try {
-    const st = statSync(audioPath);
-    console.log(`[worker] audio=${path.basename(audioPath)} sizeMB=${(st.size / 1024 / 1024).toFixed(2)}`);
-    return await transcribeWithRetry(audioPath, "transcription");
-  } catch (error) {
-    const msg = getErrorMessage(error);
-    const fallbackEligible =
-      msg.includes("ECONNRESET") ||
-      msg.includes("ETIMEDOUT") ||
-      msg.includes("EAI_AGAIN") ||
-      msg.includes("ENOTFOUND");
-    if (!fallbackEligible) throw error;
+  const chunkSec = Math.max(
+    10,
+    Math.round(readPositiveEnvNumber("TRANSCRIBE_CHUNK_SECONDS", DEFAULT_TRANSCRIBE_CHUNK_SECONDS))
+  );
+  const maxTranscribeAudioMb = readPositiveEnvNumber("MAX_TRANSCRIBE_AUDIO_MB", DEFAULT_MAX_TRANSCRIBE_AUDIO_MB);
+  const st = statSync(audioPath);
+  const audioSizeMb = st.size / 1024 / 1024;
 
+  const runChunkedTranscription = async (reason: string) => {
     await updateJobTelemetry(jobId, "TRANSCRIBING", 35, "Retrying transcription in smaller chunks");
+    console.warn(`[worker] switching to chunked transcription: ${reason}`);
     const chunkPattern = path.join(tmpDir, "audio_chunk_%03d.mp3");
     await withRetries("split audio for chunked transcription", () =>
       runFfmpeg([
@@ -284,7 +288,7 @@ async function transcribeAudio(audioPath: string, tmpDir: string, jobId: string)
         "-f",
         "segment",
         "-segment_time",
-        String(CHUNK_SEC),
+        String(chunkSec),
         "-ac",
         "1",
         "-ar",
@@ -314,7 +318,7 @@ async function transcribeAudio(audioPath: string, tmpDir: string, jobId: string)
       );
       const partial = await transcribeWithRetry(chunkPath, `transcription chunk ${i + 1}`);
 
-      const offset = i * CHUNK_SEC;
+      const offset = i * chunkSec;
       const partialText = (partial as any).text || "";
       const partialSegments = (((partial as any).segments || []) as Array<{ start: number; end: number; text: string }>)
         .map((s) => ({ start: s.start + offset, end: s.end + offset, text: s.text || "" }));
@@ -323,6 +327,31 @@ async function transcribeAudio(audioPath: string, tmpDir: string, jobId: string)
     }
 
     return { text: mergedText.trim(), segments: mergedSegments };
+  };
+
+  console.log(`[worker] audio=${path.basename(audioPath)} sizeMB=${audioSizeMb.toFixed(2)}`);
+
+  if (audioSizeMb > maxTranscribeAudioMb) {
+    return runChunkedTranscription(
+      `audio size ${audioSizeMb.toFixed(2)}MB exceeds MAX_TRANSCRIBE_AUDIO_MB=${maxTranscribeAudioMb}`
+    );
+  }
+
+  try {
+    return await transcribeWithRetry(audioPath, "transcription");
+  } catch (error) {
+    const msg = getErrorMessage(error);
+    const fallbackEligible =
+      msg.includes("ECONNRESET") ||
+      msg.includes("ETIMEDOUT") ||
+      msg.includes("EAI_AGAIN") ||
+      msg.includes("ENOTFOUND") ||
+      msg.includes("timeout") ||
+      msg.includes("status=429") ||
+      msg.includes("status=5");
+    if (!fallbackEligible) throw error;
+
+    return runChunkedTranscription(msg);
   }
 }
 

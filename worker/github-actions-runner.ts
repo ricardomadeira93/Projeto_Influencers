@@ -56,10 +56,28 @@ type SegmentsResponse = {
   segments: Segment[];
 };
 
+const DEFAULT_MAX_TRANSCRIBE_AUDIO_MB = 20;
+const DEFAULT_TRANSCRIBE_CHUNK_SECONDS = 45;
+
 function requiredEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env ${name}`);
   return v;
+}
+
+function parsePositiveNumber(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error || "Unknown error");
+}
+
+function shouldRetryTranscribeInChunks(error: unknown) {
+  const message = getErrorMessage(error);
+  return /ECONNRESET|ETIMEDOUT|timeout|timed out|Connection error|socket hang up|502|503|504/i.test(message);
 }
 
 function log(step: string, detail: string) {
@@ -84,6 +102,24 @@ function runCapture(cmd: string, args: string[]) {
     p.on("exit", (code) => (code === 0 ? resolve(out) : reject(new Error(err || `${cmd} failed with ${code}`))));
     p.on("error", reject);
   });
+}
+
+async function probeDurationSeconds(mediaPath: string) {
+  try {
+    const out = await runCapture("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      mediaPath
+    ]);
+    const value = Number(out.trim());
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function toSrtTs(sec: number) {
@@ -161,12 +197,127 @@ async function postInternal(pathname: string, payload: Record<string, unknown>, 
   return data;
 }
 
+async function persistTranscriptForJob(supabase: any, jobId: string, transcript: string) {
+  const nowIso = new Date().toISOString();
+
+  let { error } = await supabase
+    .from("jobs")
+    .update({ transcript, updated_at: nowIso })
+    .eq("id", jobId);
+
+  if (error?.message?.includes("transcript")) {
+    const fallback = await supabase
+      .from("jobs")
+      .update({ updated_at: nowIso })
+      .eq("id", jobId);
+    error = fallback.error;
+  }
+
+  if (error) {
+    console.warn(`[worker:transcribe] could not persist transcript: ${error.message}`);
+  }
+}
+
+async function transcribeInChunks(params: {
+  audioPath: string;
+  tmpDir: string;
+  chunkSeconds: number;
+  jobId: string;
+  userId: string;
+  secret: string;
+  baseUrl: string;
+  supabase: any;
+}) {
+  const { audioPath, tmpDir, chunkSeconds, jobId, userId, secret, baseUrl, supabase } = params;
+  const chunkDir = path.join(tmpDir, "transcribe-chunks");
+  await fs.mkdir(chunkDir, { recursive: true });
+
+  const chunkPattern = path.join(chunkDir, "audio_chunk_%03d.mp3");
+  await run("ffmpeg", [
+    "-y",
+    "-i",
+    audioPath,
+    "-f",
+    "segment",
+    "-segment_time",
+    String(chunkSeconds),
+    "-c",
+    "copy",
+    chunkPattern
+  ]);
+
+  const chunkFiles = (await fs.readdir(chunkDir))
+    .filter((file) => file.startsWith("audio_chunk_") && file.endsWith(".mp3"))
+    .sort();
+
+  if (!chunkFiles.length) {
+    throw new Error("Chunked transcription could not create chunk files");
+  }
+
+  const mergedText: string[] = [];
+  const mergedSegments: TranscriptSegment[] = [];
+  let offsetSec = 0;
+
+  for (let i = 0; i < chunkFiles.length; i += 1) {
+    const chunkFile = chunkFiles[i];
+    const chunkLocalPath = path.join(chunkDir, chunkFile);
+    const chunkStoragePath = `${userId}/${jobId}/chunks/${chunkFile}`;
+    const chunkBytes = await fs.readFile(chunkLocalPath);
+
+    log("transcribe", `uploading chunk ${i + 1}/${chunkFiles.length}`);
+    const upload = await supabase.storage.from("audio").upload(chunkStoragePath, chunkBytes, {
+      contentType: "audio/mpeg",
+      upsert: true
+    });
+    if (upload.error) throw upload.error;
+
+    log("transcribe", `requesting chunk ${i + 1}/${chunkFiles.length} offset=${offsetSec.toFixed(2)}s`);
+    const chunkTranscription = (await postInternal(
+      "/api/internal/ai/transcribe",
+      {
+        jobId,
+        audioPath: chunkStoragePath,
+        offsetSec,
+        persistTranscript: false
+      },
+      secret,
+      baseUrl
+    )) as TranscribeResponse;
+
+    const chunkText = (chunkTranscription.text || "").trim();
+    if (chunkText) mergedText.push(chunkText);
+
+    const chunkSegments = chunkTranscription.segments || [];
+    if (chunkSegments.length) mergedSegments.push(...chunkSegments);
+
+    const chunkDuration =
+      parsePositiveNumber(String(chunkTranscription.durationSec || ""), 0) ||
+      (await probeDurationSeconds(chunkLocalPath)) ||
+      chunkSeconds;
+    offsetSec += chunkDuration;
+  }
+
+  return {
+    text: mergedText.join("\n"),
+    segments: mergedSegments,
+    durationSec: offsetSec
+  } as TranscribeResponse;
+}
+
 async function main() {
   const JOB_ID = requiredEnv("JOB_ID");
   const INTERNAL_API_BASE_URL = requiredEnv("INTERNAL_API_BASE_URL");
   const WORKER_SECRET = requiredEnv("WORKER_SECRET");
   const SUPABASE_URL = requiredEnv("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const MAX_TRANSCRIBE_AUDIO_MB = parsePositiveNumber(
+    process.env.MAX_TRANSCRIBE_AUDIO_MB,
+    DEFAULT_MAX_TRANSCRIBE_AUDIO_MB
+  );
+  const TRANSCRIBE_CHUNK_SECONDS = Math.max(
+    10,
+    Math.round(parsePositiveNumber(process.env.TRANSCRIBE_CHUNK_SECONDS, DEFAULT_TRANSCRIBE_CHUNK_SECONDS))
+  );
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false }
@@ -238,7 +389,8 @@ async function main() {
     ]);
 
     const audioStats = statSync(audioPath);
-    log("audio", `audio=${path.basename(audioPath)} sizeMB=${(audioStats.size / 1024 / 1024).toFixed(2)}`);
+    const audioSizeMb = audioStats.size / 1024 / 1024;
+    log("audio", `audio=${path.basename(audioPath)} sizeMB=${audioSizeMb.toFixed(2)}`);
 
     const audioStoragePath = `${startData.job.userId}/${startData.job.id}.mp3`;
     log("audio", `uploading ${audioStoragePath}`);
@@ -249,13 +401,52 @@ async function main() {
     });
     if (audioUpload.error) throw audioUpload.error;
 
-    log("transcribe", "requesting transcript from internal API");
-    const transcript = (await postInternal(
-      "/api/internal/ai/transcribe",
-      { jobId: startData.job.id, audioPath: audioStoragePath },
-      WORKER_SECRET,
-      INTERNAL_API_BASE_URL
-    )) as TranscribeResponse;
+    let transcript: TranscribeResponse;
+    if (audioSizeMb > MAX_TRANSCRIBE_AUDIO_MB) {
+      log(
+        "transcribe",
+        `audio is ${audioSizeMb.toFixed(2)}MB (>${MAX_TRANSCRIBE_AUDIO_MB}MB); using ${TRANSCRIBE_CHUNK_SECONDS}s chunks`
+      );
+      transcript = await transcribeInChunks({
+        audioPath,
+        tmpDir,
+        chunkSeconds: TRANSCRIBE_CHUNK_SECONDS,
+        jobId: startData.job.id,
+        userId: startData.job.userId,
+        secret: WORKER_SECRET,
+        baseUrl: INTERNAL_API_BASE_URL,
+        supabase
+      });
+      await persistTranscriptForJob(supabase, startData.job.id, transcript.text || "");
+    } else {
+      try {
+        log("transcribe", "requesting transcript from internal API");
+        transcript = (await postInternal(
+          "/api/internal/ai/transcribe",
+          { jobId: startData.job.id, audioPath: audioStoragePath },
+          WORKER_SECRET,
+          INTERNAL_API_BASE_URL
+        )) as TranscribeResponse;
+      } catch (error) {
+        if (!shouldRetryTranscribeInChunks(error)) throw error;
+
+        log(
+          "transcribe",
+          `full audio transcription failed, retrying with ${TRANSCRIBE_CHUNK_SECONDS}s chunks (${getErrorMessage(error).slice(0, 180)})`
+        );
+        transcript = await transcribeInChunks({
+          audioPath,
+          tmpDir,
+          chunkSeconds: TRANSCRIBE_CHUNK_SECONDS,
+          jobId: startData.job.id,
+          userId: startData.job.userId,
+          secret: WORKER_SECRET,
+          baseUrl: INTERNAL_API_BASE_URL,
+          supabase
+        });
+        await persistTranscriptForJob(supabase, startData.job.id, transcript.text || "");
+      }
+    }
 
     const transcriptText = (transcript.text || "").trim();
     if (!transcriptText) throw new Error("Transcript is empty");
@@ -393,4 +584,3 @@ main().catch(async (err: any) => {
   console.error(err);
   process.exit(1);
 });
-

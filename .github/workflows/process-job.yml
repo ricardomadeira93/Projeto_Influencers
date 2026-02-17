@@ -39,4 +39,6 @@ jobs:
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MAX_TRANSCRIBE_AUDIO_MB: ${{ secrets.MAX_TRANSCRIBE_AUDIO_MB }}
+          TRANSCRIBE_CHUNK_SECONDS: ${{ secrets.TRANSCRIBE_CHUNK_SECONDS }}
         run: pnpm worker:actions

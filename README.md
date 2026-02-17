@@ -27,11 +27,15 @@ Create `.env.local` from `.env.example`:
 
 ```bash
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
 INTERNAL_API_BASE_URL=http://localhost:3000
 WORKER_SECRET=
 GITHUB_OWNER=
 GITHUB_REPO=
 GITHUB_DISPATCH_TOKEN=
+# optional legacy alias
+GH_DISPATCH_TOKEN=
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -41,6 +45,9 @@ FREE_MINUTES_TOTAL=60
 MAX_UPLOAD_DURATION=1800
 # optional
 FEATURE_DIRECT_PUBLISH=false
+# optional transcription tuning for unstable hosts/timeouts
+MAX_TRANSCRIBE_AUDIO_MB=20
+TRANSCRIBE_CHUNK_SECONDS=45
 ```
 
 ## Local setup
@@ -142,6 +149,9 @@ Required GitHub repository secrets:
 - `INTERNAL_API_BASE_URL` (public API base URL, e.g. `https://yourapp.vercel.app`)
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- optional:
+  - `MAX_TRANSCRIBE_AUDIO_MB` (default 20)
+  - `TRANSCRIBE_CHUNK_SECONDS` (default 45)
 
 Required app host env vars (Vercel/server):
 - `OPENAI_API_KEY`
@@ -152,7 +162,7 @@ Required app host env vars (Vercel/server):
 Dispatch configuration env vars (server-side in app host):
 - `GITHUB_OWNER`
 - `GITHUB_REPO`
-- `GITHUB_DISPATCH_TOKEN`
+- `GITHUB_DISPATCH_TOKEN` (or legacy `GH_DISPATCH_TOKEN`)
 
 `GITHUB_DISPATCH_TOKEN` should be a PAT with `repo` scope (fine-grained token with actions/repository dispatch permission is also acceptable).
 

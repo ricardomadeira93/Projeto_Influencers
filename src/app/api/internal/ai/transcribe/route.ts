@@ -11,7 +11,9 @@ import { openai } from "@/lib/openai";
 const schema = z.object({
   jobId: z.string().uuid(),
   audioPath: z.string().min(1),
-  language: z.string().min(2).max(12).optional()
+  language: z.string().min(2).max(12).optional(),
+  offsetSec: z.number().min(0).optional(),
+  persistTranscript: z.boolean().optional()
 });
 
 function isMissingTranscriptColumn(error: any) {
@@ -69,27 +71,41 @@ export async function POST(request: NextRequest) {
       ...(parsed.data.language ? { language: parsed.data.language } : {})
     });
 
+    const offsetSec = Number(parsed.data.offsetSec || 0);
     const text = String((transcription as any).text || "");
-    const segments = ((transcription as any).segments || []) as Array<{ start: number; end: number; text: string }>;
+    const rawSegments = ((transcription as any).segments || []) as Array<{ start: number; end: number; text: string }>;
+    const segments = rawSegments
+      .map((segment) => {
+        const start = Number(segment.start || 0) + offsetSec;
+        const end = Number(segment.end || segment.start || 0) + offsetSec;
+        return {
+          start: Number.isFinite(start) ? start : offsetSec,
+          end: Number.isFinite(end) ? Math.max(start, end) : offsetSec,
+          text: String(segment.text || "").trim()
+        };
+      })
+      .filter((segment) => segment.end > segment.start);
     const durationSec = Number((transcription as any).duration || job.source_duration_sec || 0);
 
-    let { error: updateErr } = await supabaseAdmin
-      .from("jobs")
-      .update({
-        transcript: text,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", job.id);
-
-    if (updateErr && isMissingTranscriptColumn(updateErr)) {
-      const fallback = await supabaseAdmin
+    if (parsed.data.persistTranscript !== false) {
+      let { error: updateErr } = await supabaseAdmin
         .from("jobs")
-        .update({ updated_at: new Date().toISOString() })
+        .update({
+          transcript: text,
+          updated_at: new Date().toISOString()
+        })
         .eq("id", job.id);
-      updateErr = fallback.error;
-    }
-    if (updateErr) {
-      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+
+      if (updateErr && isMissingTranscriptColumn(updateErr)) {
+        const fallback = await supabaseAdmin
+          .from("jobs")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", job.id);
+        updateErr = fallback.error;
+      }
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ text, segments, durationSec });
@@ -99,4 +115,3 @@ export async function POST(request: NextRequest) {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 }
-
