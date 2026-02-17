@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum JobStatus {
+  PENDING
+  UPLOADED
+  PROCESSING
+  DONE
+  FAILED
+  EXPIRED
+}
+
+model User {
+  id               String         @id @db.Uuid
+  email            String         @default("")
+  profileName      String?        @map("profile_name")
+  planType         String         @default("FREE") @map("plan_type")
+  minutesRemaining Int            @default(60) @map("minutes_remaining")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  jobs             Job[]
+  jobExports       JobExport[]
+  usageLogs        UsageLog[]
+  publishTokens    PublishToken[]
+  publishQueue     PublishQueue[]
+
+  @@map("users")
+}
+
+model Job {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String      @map("user_id") @db.Uuid
+  status            JobStatus   @default(PENDING)
+  sourcePath        String      @map("source_path")
+  sourceFilename    String      @map("source_filename")
+  sourceDurationSec Int         @map("source_duration_sec")
+  cropConfig        Json        @map("crop_config")
+  suggestions       Json?
+  errorMessage      String?     @map("error_message")
+  expiresAt         DateTime    @map("expires_at") @db.Timestamptz(6)
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exports           JobExport[]
+  usageLogs         UsageLog[]
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_jobs_user_created")
+  @@index([status, createdAt(sort: Asc)], map: "idx_jobs_status_created")
+  @@index([expiresAt], map: "idx_jobs_expires")
+  @@map("jobs")
+}
+
+model JobExport {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobId            String         @map("job_id") @db.Uuid
+  userId           String         @map("user_id") @db.Uuid
+  clipId           String         @map("clip_id")
+  clipPath         String         @map("clip_path")
+  clipUrl          String         @map("clip_url")
+  title            String
+  description      String
+  hashtags         String[]       @default([])
+  hook             String
+  reason           String
+  providerMetadata Json           @default("{}") @map("provider_metadata")
+  expiresAt        DateTime       @map("expires_at") @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  job              Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publishQueue     PublishQueue[]
+
+  @@unique([jobId, clipId])
+  @@index([jobId, createdAt(sort: Asc)], map: "idx_exports_job_created")
+  @@index([expiresAt], map: "idx_exports_expires")
+  @@map("job_exports")
+}
+
+model UsageLog {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  jobId       String?   @map("job_id") @db.Uuid
+  minutesUsed Int       @map("minutes_used")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job         Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@map("usage_logs")
+}
+
+model Feedback {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  text      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("feedback")
+}
+
+model PublishToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider     String
+  userId       String    @map("user_id") @db.Uuid
+  accessToken  String    @map("access_token")
+  refreshToken String?   @map("refresh_token")
+  scope        String?
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, userId])
+  @@map("publish_tokens")
+}
+
+model PublishQueue {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  jobExportId String    @map("job_export_id") @db.Uuid
+  provider    String
+  status      String    @default("PENDING")
+  payload     Json      @default("{}")
+  errorMessage String?  @map("error_message")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobExport   JobExport @relation(fields: [jobExportId], references: [id], onDelete: Cascade)
+
+  @@map("publish_queue")
+}
