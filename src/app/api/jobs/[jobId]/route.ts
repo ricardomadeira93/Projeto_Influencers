@@ -4,7 +4,6 @@ import { getUserFromRequest } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getJobForUser } from "@/lib/db";
 import { dispatchProcessJob } from "@/lib/github/dispatch";
-import { runWorkerTick } from "@/worker/tick";
 
 const patchSchema = z.object({
   status: z.enum(["UPLOADED", "READY_TO_PROCESS", "FAILED"]).optional()
@@ -78,9 +77,6 @@ export async function PATCH(request: NextRequest, { params }: { params: { jobId:
     try {
       await dispatchProcessJob(params.jobId);
     } catch (dispatchError: any) {
-      const localFallbackEnabled =
-        process.env.LOCAL_WORKER_FALLBACK === "1" || process.env.NODE_ENV !== "production";
-
       await supabaseAdmin
         .from("jobs")
         .update({
@@ -93,17 +89,6 @@ export async function PATCH(request: NextRequest, { params }: { params: { jobId:
       const message = dispatchError?.message || "Dispatch failed";
       const isPermissionError =
         message.includes("Resource not accessible by personal access token") || message.includes("(403)");
-
-      if (localFallbackEnabled) {
-        void runWorkerTick().catch((err) => {
-          console.error("Local fallback worker tick failed", err);
-        });
-        return NextResponse.json({
-          ok: true,
-          fallback: "local-worker",
-          warning: "GitHub dispatch failed; processing started via local worker fallback."
-        });
-      }
 
       return NextResponse.json(
         {

@@ -1,7 +1,7 @@
 export async function dispatchProcessJob(jobId: string) {
   const owner = process.env.GITHUB_OWNER;
   const repo = process.env.GITHUB_REPO;
-  const token = process.env.GITHUB_DISPATCH_TOKEN || process.env.GITHUB_TOKEN;
+  const token = process.env.GH_DISPATCH_TOKEN || process.env.GH_TOKEN;
 
   if (!owner || !repo || !token) {
     throw new Error("Missing GitHub dispatch configuration (GITHUB_OWNER, GITHUB_REPO, GITHUB_DISPATCH_TOKEN/GITHUB_TOKEN)");

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Job has no user" }, { status: 400 });
   }
 
-  if (!["READY_TO_PROCESS", "UPLOADED"].includes(job.status)) {
+  if (job.status !== "READY_TO_PROCESS") {
     return NextResponse.json({ error: `Invalid job status ${job.status}` }, { status: 409 });
   }
 
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
         error_message: null
       })
       .eq("id", job.id)
-      .in("status", ["READY_TO_PROCESS", "UPLOADED"])
+      .eq("status", "READY_TO_PROCESS")
       .select("id,user_id,status,crop_config,source_path,source_duration_sec,source_filename")
       .maybeSingle();
 
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
           error_message: null
         })
         .eq("id", job.id)
-        .in("status", ["READY_TO_PROCESS", "UPLOADED"])
+        .eq("status", "READY_TO_PROCESS")
         .select("id,user_id,status,crop_config,source_path,source_duration_sec,source_filename")
         .maybeSingle();
       claimed = fallback.data;

@@ -7,7 +7,8 @@ SplitShorts turns one tutorial video (webcam + screen in a single recording) int
 - Backend: Next.js Route Handlers
 - DB/Auth/Storage: Supabase
 - Queue: DB-backed `jobs` table (`PENDING`, `UPLOADED`, `READY_TO_PROCESS`, `PROCESSING`, `DONE`, `FAILED`, `EXPIRED`)
-- Worker: FFmpeg + OpenAI Whisper + GPT suggestions (`src/worker`)
+- Worker: FFmpeg rendering + orchestration (`src/worker`)
+- AI: Whisper + GPT run in internal Next.js API endpoints
 - GitHub Actions worker runner: `worker/github-actions-runner.ts`
 
 ## Core MVP features
@@ -82,6 +83,7 @@ npm run worker:once
 4. User clicks Generate, app sets `READY_TO_PROCESS` and dispatches GitHub Actions (`repository_dispatch`).
 5. Actions runner calls `/api/internal/worker/start` (Bearer `WORKER_SECRET`) and claims the job as `PROCESSING`.
 6. Runner downloads source, transcribes (Whisper), selects segments (LLM), renders clips (FFmpeg), uploads exports.
+   - Whisper + GPT are called through internal API endpoints (`/api/internal/ai/*`) to keep AI calls server-side.
 7. Runner calls `/api/internal/worker/finish` (or `/fail`) to finalize state.
 8. Cleanup endpoint expires source uploads and old exports.
 
@@ -91,6 +93,8 @@ npm run worker:once
 - `POST /api/internal/worker/start` (header `Authorization: Bearer $WORKER_SECRET`)
 - `POST /api/internal/worker/finish` (header `Authorization: Bearer $WORKER_SECRET`)
 - `POST /api/internal/worker/fail` (header `Authorization: Bearer $WORKER_SECRET`)
+- `POST /api/internal/ai/transcribe` (header `Authorization: Bearer $WORKER_SECRET`)
+- `POST /api/internal/ai/segments` (header `Authorization: Bearer $WORKER_SECRET`)
 
 Example cron call:
 ```bash
@@ -136,9 +140,14 @@ Manual publish pack only:
 Required GitHub repository secrets:
 - `WORKER_SECRET`
 - `INTERNAL_API_BASE_URL` (public API base URL, e.g. `https://yourapp.vercel.app`)
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Required app host env vars (Vercel/server):
 - `OPENAI_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `WORKER_SECRET`
 
 Dispatch configuration env vars (server-side in app host):
 - `GITHUB_OWNER`
@@ -152,7 +161,6 @@ Manual local runner test:
 JOB_ID=<uuid> \
 INTERNAL_API_BASE_URL=http://localhost:3000 \
 WORKER_SECRET=<secret> \
-OPENAI_API_KEY=<key> \
 SUPABASE_URL=<url> \
 SUPABASE_SERVICE_ROLE_KEY=<key> \
 pnpm worker:actions

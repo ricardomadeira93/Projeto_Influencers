@@ -44,6 +44,8 @@ model Job {
   sourceDurationSec Int         @map("source_duration_sec")
   cropConfig        Json        @map("crop_config")
   suggestions       Json?
+  transcript        String?
+  requestedClips    Json?       @map("requested_clips")
   errorMessage      String?     @map("error_message")
   processingStage   String?     @map("processing_stage")
   processingProgress Int        @default(0) @map("processing_progress")

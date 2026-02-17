@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns";
 
 function loadEnvFile(filename: string) {
   const fullPath = path.resolve(process.cwd(), filename);
@@ -20,6 +21,7 @@ function loadEnvFile(filename: string) {
 
 loadEnvFile(".env");
 loadEnvFile(".env.local");
+dns.setDefaultResultOrder("ipv4first");
 
 const once = process.argv.includes("--once");
 

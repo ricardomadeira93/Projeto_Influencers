@@ -37,7 +37,6 @@ jobs:
           JOB_ID: ${{ github.event.client_payload.jobId }}
           INTERNAL_API_BASE_URL: ${{ secrets.INTERNAL_API_BASE_URL }}
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: pnpm worker:actions

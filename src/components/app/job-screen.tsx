@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -40,6 +40,8 @@ function stageLabel(stage?: string) {
 }
 
 export function JobScreen({ jobId }: { jobId: string }) {
+  const loadSeqRef = useRef(0);
+  const inFlightRef = useRef(false);
   const [status, setStatus] = useState("loading");
   const [clips, setClips] = useState<Clip[]>([]);
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState("");
@@ -49,6 +51,7 @@ export function JobScreen({ jobId }: { jobId: string }) {
   const [processingStage, setProcessingStage] = useState("");
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingNote, setProcessingNote] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [crop, setCrop] = useState({
     x: 0.72,
     y: 0.7,
@@ -58,30 +61,55 @@ export function JobScreen({ jobId }: { jobId: string }) {
     captionPreset: "BOLD"
   });
 
-  async function load() {
-    setLoading(true);
-    setClips([]);
-    setSourcePreviewUrl("");
-    const res = await fetch(`/api/jobs/${jobId}/suggest`, { headers: await authHeaders(), cache: "no-store" });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error || "error");
-      setLoading(false);
-      return;
+  async function load(options?: { reset?: boolean; fetchPreview?: boolean }) {
+    const reset = options?.reset ?? false;
+    const fetchPreview = options?.fetchPreview ?? false;
+    if (!reset && inFlightRef.current) return;
+    const seq = ++loadSeqRef.current;
+    inFlightRef.current = true;
+    if (reset) {
+      setLoading(true);
+      setStatus("loading");
+      setJobError("");
+      setProcessingStage("");
+      setProcessingProgress(0);
+      setProcessingNote("");
+      setMessage("");
+      setClips([]);
+      setSourcePreviewUrl("");
+    } else {
+      setRefreshing(true);
     }
-    setStatus(data.job.status);
-    setJobError(data.job.error_message || "");
-    setProcessingStage(data.job.processing_stage || "");
-    setProcessingProgress(Number(data.job.processing_progress || 0));
-    setProcessingNote(data.job.processing_note || "");
-    setClips(data.exports || []);
-    if (data.job.crop_config) setCrop(data.job.crop_config);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/suggest`, { headers: await authHeaders(), cache: "no-store" });
+      const data = await res.json();
+      if (seq !== loadSeqRef.current) return;
+      if (!res.ok) {
+        setStatus(data.error || "error");
+        if (reset) setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      setStatus(data.job.status);
+      setJobError(data.job.error_message || "");
+      setProcessingStage(data.job.processing_stage || "");
+      setProcessingProgress(Number(data.job.processing_progress || 0));
+      setProcessingNote(data.job.processing_note || "");
+      setClips(data.exports || []);
+      if (data.job.crop_config) setCrop(data.job.crop_config);
 
-    const previewRes = await fetch(`/api/jobs/${jobId}/preview`, { headers: await authHeaders(), cache: "no-store" });
-    const previewData = await previewRes.json().catch(() => ({}));
-    if (previewRes.ok) setSourcePreviewUrl(previewData.previewUrl || "");
+      if (fetchPreview) {
+        const previewRes = await fetch(`/api/jobs/${jobId}/preview`, { headers: await authHeaders(), cache: "no-store" });
+        const previewData = await previewRes.json().catch(() => ({}));
+        if (seq !== loadSeqRef.current) return;
+        if (previewRes.ok) setSourcePreviewUrl(previewData.previewUrl || "");
+      }
 
-    setLoading(false);
+      if (reset) setLoading(false);
+      setRefreshing(false);
+    } finally {
+      if (seq === loadSeqRef.current) inFlightRef.current = false;
+    }
   }
 
   async function saveCrop() {
@@ -133,10 +161,24 @@ export function JobScreen({ jobId }: { jobId: string }) {
   }
 
   useEffect(() => {
-    load().catch(console.error);
-    const t = setInterval(() => load().catch(console.error), 10000);
-    return () => clearInterval(t);
+    load({ reset: true, fetchPreview: true }).catch(console.error);
+    return () => {
+      loadSeqRef.current += 1;
+    };
   }, [jobId]);
+
+  useEffect(() => {
+    const activeStatuses = new Set(["READY_TO_PROCESS", "PROCESSING"]);
+    if (!activeStatuses.has(status)) return;
+
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      load({ reset: false, fetchPreview: false }).catch(console.error);
+    }, 15000);
+    return () => {
+      clearInterval(t);
+    };
+  }, [jobId, status]);
 
   const stepStates = useMemo(() => {
     if (status === "DONE") return ["done", "done", "done"] as const;
@@ -252,6 +294,7 @@ export function JobScreen({ jobId }: { jobId: string }) {
               <div className="space-y-1 text-xs text-muted-foreground">
                 <p>Current step: {stageLabel(processingStage) || "Processing"}</p>
                 {processingNote ? <p>{processingNote}</p> : null}
+                {refreshing ? <p>Refreshing status...</p> : null}
               </div>
             ) : null}
             <ul className="space-y-2">

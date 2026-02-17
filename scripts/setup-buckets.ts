@@ -46,6 +46,7 @@ async function ensureBucket(name: string, isPublic: boolean) {
 
 async function main() {
   await ensureBucket("uploads", false);
+  await ensureBucket("audio", false);
   await ensureBucket("exports", false);
 }
 

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -129,11 +129,88 @@ async function withRetries<T>(label: string, fn: () => Promise<T>, attempts = 3)
       lastError = err;
       if (i < attempts) {
         console.warn(`[worker] ${label} failed (attempt ${i}/${attempts}): ${getErrorMessage(err)}`);
-        await wait(400 * i);
+        const isTranscription = label.toLowerCase().includes("transcription");
+        const baseDelay = isTranscription ? 2000 : 400;
+        const jitter = Math.floor(Math.random() * 300);
+        await wait(baseDelay * i + jitter);
       }
     }
   }
   throw new Error(`${label}: ${getErrorMessage(lastError)}`);
+}
+
+const TRANSCRIBE_TIMEOUT_MS = 300_000;
+
+function randomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function getErrorCode(err: any) {
+  return String(err?.code || err?.cause?.code || "").toUpperCase();
+}
+
+function getErrorStatus(err: any) {
+  return Number(err?.status || err?.cause?.status || err?.response?.status || 0);
+}
+
+function isTransientTranscriptionError(err: any) {
+  const code = getErrorCode(err);
+  const status = getErrorStatus(err);
+  if (["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND"].includes(code)) return true;
+  if (status === 429 || status >= 500) return true;
+  return false;
+}
+
+async function transcribeWithRetry(filePath: string, label: string) {
+  const stats = await fs.stat(filePath);
+  const sizeMb = stats.size / (1024 * 1024);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const backoffMs =
+      attempt === 1 ? 0 : attempt === 2 ? randomInt(15_000, 30_000) : randomInt(45_000, 90_000);
+    if (backoffMs > 0) {
+      console.warn(
+        `[worker] ${label} attempt ${attempt}/3 waiting ${(backoffMs / 1000).toFixed(1)}s before retry`
+      );
+      await wait(backoffMs);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+    const started = Date.now();
+    try {
+      console.log(
+        `[worker] ${label} attempt ${attempt}/3 size=${sizeMb.toFixed(2)}MB timeout=${Math.floor(TRANSCRIBE_TIMEOUT_MS / 1000)}s`
+      );
+      const result = await openai.audio.transcriptions.create(
+        {
+          model: "whisper-1",
+          file: createReadStream(filePath),
+          response_format: "verbose_json"
+        },
+        { signal: controller.signal }
+      );
+      clearTimeout(timer);
+      console.log(`[worker] ${label} succeeded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      return result;
+    } catch (err: any) {
+      clearTimeout(timer);
+      const code = getErrorCode(err);
+      const status = getErrorStatus(err);
+      const detail = getErrorMessage(err);
+      const transient = isTransientTranscriptionError(err);
+      if (!transient || attempt === 3) {
+        throw new Error(
+          `${label} failed size=${sizeMb.toFixed(2)}MB code=${code || "UNKNOWN"} status=${status || "n/a"} error=${detail}`
+        );
+      }
+      console.warn(
+        `[worker] ${label} failed (attempt ${attempt}/3): code=${code || "UNKNOWN"} status=${status || "n/a"} ${detail}`
+      );
+    }
+  }
+
+  throw new Error(`${label} failed unexpectedly`);
 }
 
 function isMissingTelemetryColumn(error: any) {
@@ -182,10 +259,77 @@ async function updateJobFailed(jobId: string, message: string) {
   }
 }
 
+async function transcribeAudio(audioPath: string, tmpDir: string, jobId: string) {
+  const CHUNK_SEC = 30;
+  try {
+    const st = statSync(audioPath);
+    console.log(`[worker] audio=${path.basename(audioPath)} sizeMB=${(st.size / 1024 / 1024).toFixed(2)}`);
+    return await transcribeWithRetry(audioPath, "transcription");
+  } catch (error) {
+    const msg = getErrorMessage(error);
+    const fallbackEligible =
+      msg.includes("ECONNRESET") ||
+      msg.includes("ETIMEDOUT") ||
+      msg.includes("EAI_AGAIN") ||
+      msg.includes("ENOTFOUND");
+    if (!fallbackEligible) throw error;
+
+    await updateJobTelemetry(jobId, "TRANSCRIBING", 35, "Retrying transcription in smaller chunks");
+    const chunkPattern = path.join(tmpDir, "audio_chunk_%03d.mp3");
+    await withRetries("split audio for chunked transcription", () =>
+      runFfmpeg([
+        "-y",
+        "-i",
+        audioPath,
+        "-f",
+        "segment",
+        "-segment_time",
+        String(CHUNK_SEC),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-b:a",
+        "16k",
+        chunkPattern
+      ])
+    );
+
+    const chunkFiles = (await fs.readdir(tmpDir))
+      .filter((name) => name.startsWith("audio_chunk_") && name.endsWith(".mp3"))
+      .sort();
+    if (!chunkFiles.length) throw new Error("Chunked transcription failed: no audio chunks generated");
+    const st1 = statSync(path.join(tmpDir, chunkFiles[0]));
+    console.log(`[worker] chunk1 sizeMB=${(st1.size / 1024 / 1024).toFixed(2)} path=${path.join(tmpDir, chunkFiles[0])}`);
+
+    const mergedSegments: Array<{ start: number; end: number; text: string }> = [];
+    let mergedText = "";
+    for (let i = 0; i < chunkFiles.length; i++) {
+      const chunkPath = path.join(tmpDir, chunkFiles[i]);
+      await updateJobTelemetry(
+        jobId,
+        "TRANSCRIBING",
+        Math.min(48, 35 + Math.round(((i + 1) / chunkFiles.length) * 13)),
+        `Transcribing chunk ${i + 1}/${chunkFiles.length}`
+      );
+      const partial = await transcribeWithRetry(chunkPath, `transcription chunk ${i + 1}`);
+
+      const offset = i * CHUNK_SEC;
+      const partialText = (partial as any).text || "";
+      const partialSegments = (((partial as any).segments || []) as Array<{ start: number; end: number; text: string }>)
+        .map((s) => ({ start: s.start + offset, end: s.end + offset, text: s.text || "" }));
+      mergedText += `${partialText}\n`;
+      mergedSegments.push(...partialSegments);
+    }
+
+    return { text: mergedText.trim(), segments: mergedSegments };
+  }
+}
+
 async function processJob(job: any) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "splitshorts-"));
   const srcPath = path.join(tmpDir, "source.mp4");
-  const audioPath = path.join(tmpDir, "audio.m4a");
+  const audioPath = path.join(tmpDir, "audio.mp3");
 
   try {
     await updateJobTelemetry(job.id, "DOWNLOADING_SOURCE", 5, "Downloading uploaded source video");
@@ -211,22 +355,14 @@ async function processJob(job: any) {
         "1",
         "-ar",
         "16000",
-        "-c:a",
-        "aac",
         "-b:a",
-        "64k",
+        "16k",
         audioPath
       ])
     );
 
     await updateJobTelemetry(job.id, "TRANSCRIBING", 30, "Transcribing audio");
-    const transcription = await withRetries("transcription", () =>
-      openai.audio.transcriptions.create({
-        model: "whisper-1",
-        file: createReadStream(audioPath),
-        response_format: "verbose_json"
-      })
-    );
+    const transcription = await transcribeAudio(audioPath, tmpDir, job.id);
 
     const transcriptText = (transcription as any).text || "";
     const segments = ((transcription as any).segments || []) as Array<{ start: number; end: number; text: string }>;
@@ -389,10 +525,25 @@ async function processJob(job: any) {
 
 export async function runWorkerTick() {
   const now = new Date().toISOString();
+  const staleCutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+
+  await supabaseAdmin
+    .from("jobs")
+    .update({
+      status: "FAILED",
+      error_message: "Marked failed automatically: processing timeout exceeded 45 minutes.",
+      processing_stage: "FAILED",
+      processing_note: "Processing timeout exceeded.",
+      finished_at: now,
+      updated_at: now
+    })
+    .eq("status", "PROCESSING")
+    .lt("processing_started_at", staleCutoff);
+
   const { data: jobs, error } = await supabaseAdmin
     .from("jobs")
     .select("*")
-    .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+    .eq("status", "READY_TO_PROCESS")
     .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -427,7 +578,7 @@ export async function runWorkerTick() {
         updated_at: now
       })
       .eq("id", job.id)
-      .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+      .eq("status", "READY_TO_PROCESS")
       .select("id")
       .maybeSingle();
 
@@ -440,7 +591,7 @@ export async function runWorkerTick() {
           updated_at: now
         })
         .eq("id", job.id)
-        .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+        .eq("status", "READY_TO_PROCESS")
         .select("id")
         .maybeSingle();
       claimed = fallbackClaim.data;

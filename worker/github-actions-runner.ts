@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import OpenAI from "openai";
+import dns from "node:dns";
 import { createClient } from "@supabase/supabase-js";
+
+dns.setDefaultResultOrder("ipv4first");
 
 type StartResponse = {
   job: {
@@ -44,33 +46,15 @@ type Segment = {
 
 type TranscriptSegment = { start: number; end: number; text: string };
 
-const SEGMENT_SCHEMA = {
-  name: "segments",
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      segments: {
-        type: "array",
-        maxItems: 5,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            start_sec: { type: "number" },
-            end_sec: { type: "number" },
-            title: { type: "string" },
-            hook: { type: "string" },
-            reason: { type: "string" }
-          },
-          required: ["start_sec", "end_sec", "title", "hook", "reason"]
-        }
-      }
-    },
-    required: ["segments"]
-  },
-  strict: true
-} as const;
+type TranscribeResponse = {
+  text: string;
+  segments?: TranscriptSegment[];
+  durationSec?: number;
+};
+
+type SegmentsResponse = {
+  segments: Segment[];
+};
 
 function requiredEnv(name: string) {
   const v = process.env[name];
@@ -143,7 +127,12 @@ function cropToPixels(
   width: number,
   height: number
 ) {
-  const fallback = { x: Math.floor(width * 0.72), y: Math.floor(height * 0.7), width: Math.floor(width * 0.26), height: Math.floor(height * 0.26) };
+  const fallback = {
+    x: Math.floor(width * 0.72),
+    y: Math.floor(height * 0.7),
+    width: Math.floor(width * 0.26),
+    height: Math.floor(height * 0.26)
+  };
   if (!crop) return fallback;
 
   const toPx = (value: number, size: number) => (value <= 1 ? Math.floor(value * size) : Math.floor(value));
@@ -176,24 +165,27 @@ async function main() {
   const JOB_ID = requiredEnv("JOB_ID");
   const INTERNAL_API_BASE_URL = requiredEnv("INTERNAL_API_BASE_URL");
   const WORKER_SECRET = requiredEnv("WORKER_SECRET");
-  const OPENAI_API_KEY = requiredEnv("OPENAI_API_KEY");
   const SUPABASE_URL = requiredEnv("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "splitshorts-gh-"));
   const sourcePath = path.join(tmpDir, "source.mp4");
-  const audioPath = path.join(tmpDir, "audio.m4a");
+  const audioPath = path.join(tmpDir, "audio.mp3");
   const outDir = path.join(tmpDir, "out");
   await fs.mkdir(outDir, { recursive: true });
 
   const failSafe = async (message: string) => {
     try {
-      await postInternal("/api/internal/worker/fail", { jobId: JOB_ID, errorMessage: message.slice(0, 4000) }, WORKER_SECRET, INTERNAL_API_BASE_URL);
+      await postInternal(
+        "/api/internal/worker/fail",
+        { jobId: JOB_ID, errorMessage: message.slice(0, 4000) },
+        WORKER_SECRET,
+        INTERNAL_API_BASE_URL
+      );
     } catch (err) {
       console.error("Could not call fail endpoint", err);
     }
@@ -231,38 +223,53 @@ async function main() {
     const duration = Number(probe?.format?.duration || startData.source.durationSec || 60);
 
     log("audio", "extracting audio track");
-    await run("ffmpeg", ["-y", "-i", sourcePath, "-vn", "-acodec", "aac", audioPath]);
+    await run("ffmpeg", [
+      "-y",
+      "-i",
+      sourcePath,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-b:a",
+      "16k",
+      audioPath
+    ]);
 
-    log("transcribe", "requesting Whisper transcription");
-    const transcription = await openai.audio.transcriptions.create({
-      model: "whisper-1",
-      file: createReadStream(audioPath),
-      response_format: "verbose_json"
+    const audioStats = statSync(audioPath);
+    log("audio", `audio=${path.basename(audioPath)} sizeMB=${(audioStats.size / 1024 / 1024).toFixed(2)}`);
+
+    const audioStoragePath = `${startData.job.userId}/${startData.job.id}.mp3`;
+    log("audio", `uploading ${audioStoragePath}`);
+    const audioBuffer = await fs.readFile(audioPath);
+    const audioUpload = await supabase.storage.from("audio").upload(audioStoragePath, audioBuffer, {
+      contentType: "audio/mpeg",
+      upsert: true
     });
+    if (audioUpload.error) throw audioUpload.error;
 
-    const transcriptText = (transcription as any).text || "";
-    const transcriptSegments = ((transcription as any).segments || []) as TranscriptSegment[];
+    log("transcribe", "requesting transcript from internal API");
+    const transcript = (await postInternal(
+      "/api/internal/ai/transcribe",
+      { jobId: startData.job.id, audioPath: audioStoragePath },
+      WORKER_SECRET,
+      INTERNAL_API_BASE_URL
+    )) as TranscribeResponse;
 
-    log("segment", "selecting segments with LLM");
-    const suggest = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      response_format: { type: "json_schema", json_schema: SEGMENT_SCHEMA },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You extract short-form tutorial highlights. Return strict JSON only. Choose high-value educational moments."
-        },
-        {
-          role: "user",
-          content: `Duration: ${duration}s\nConstraints: min ${startData.limits.minSegSec}s, max ${startData.limits.maxSegSec}s, max ${startData.limits.maxSegments} segments\nTranscript:\n${transcriptText.slice(0, 14000)}`
-        }
-      ]
-    });
+    const transcriptText = (transcript.text || "").trim();
+    if (!transcriptText) throw new Error("Transcript is empty");
+    const transcriptSegments = (transcript.segments || []) as TranscriptSegment[];
 
-    const parsed = JSON.parse(suggest.choices[0]?.message?.content || '{"segments":[]}') as { segments: Segment[] };
-    const segments = sanitizeSegments(parsed.segments || [], duration, startData.limits);
+    log("segment", "requesting clip segments from internal API");
+    const segmentsRes = (await postInternal(
+      "/api/internal/ai/segments",
+      { jobId: startData.job.id, transcriptText },
+      WORKER_SECRET,
+      INTERNAL_API_BASE_URL
+    )) as SegmentsResponse;
+
+    const segments = sanitizeSegments(segmentsRes.segments || [], duration, startData.limits);
     if (!segments.length) throw new Error("No valid segments generated");
 
     const crop = cropToPixels(startData.job.webcamCrop, width, height);
@@ -364,7 +371,7 @@ async function main() {
       "/api/internal/worker/finish",
       {
         jobId: startData.job.id,
-        measuredDurationSec: duration,
+        measuredDurationSec: transcript.durationSec || duration,
         exports: exportsPayload
       },
       WORKER_SECRET,
@@ -386,3 +393,4 @@ main().catch(async (err: any) => {
   console.error(err);
   process.exit(1);
 });
+
