@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { CropConfig } from "@/lib/types";
 
 export async function createJob(input: {
+  jobId?: string;
   userId: string;
   sourcePath: string;
   originalName: string;
@@ -21,6 +22,7 @@ export async function createJob(input: {
   const { data, error } = await supabaseAdmin
     .from("jobs")
     .insert({
+      ...(input.jobId ? { id: input.jobId } : {}),
       user_id: input.userId,
       status: "PENDING",
       source_path: input.sourcePath,

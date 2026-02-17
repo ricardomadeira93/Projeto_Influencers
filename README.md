@@ -6,8 +6,9 @@ SplitShorts turns one tutorial video (webcam + screen in a single recording) int
 - Frontend: Next.js App Router + TypeScript + Tailwind
 - Backend: Next.js Route Handlers
 - DB/Auth/Storage: Supabase
-- Queue: DB-backed `jobs` table (`PENDING`, `UPLOADED`, `PROCESSING`, `DONE`, `FAILED`, `EXPIRED`)
+- Queue: DB-backed `jobs` table (`PENDING`, `UPLOADED`, `READY_TO_PROCESS`, `PROCESSING`, `DONE`, `FAILED`, `EXPIRED`)
 - Worker: FFmpeg + OpenAI Whisper + GPT suggestions (`src/worker`)
+- GitHub Actions worker runner: `worker/github-actions-runner.ts`
 
 ## Core MVP features
 - Signed upload URL flow
@@ -24,6 +25,12 @@ SplitShorts turns one tutorial video (webcam + screen in a single recording) int
 Create `.env.local` from `.env.example`:
 
 ```bash
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+INTERNAL_API_BASE_URL=http://localhost:3000
+WORKER_SECRET=
+GITHUB_OWNER=
+GITHUB_REPO=
+GITHUB_DISPATCH_TOKEN=
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -46,6 +53,7 @@ npm run prisma:generate
 ```
 2. Apply SQL migration in Supabase SQL editor:
 - `supabase/migrations/20260217_splitshorts_init.sql`
+- `supabase/migrations/20260217_worker_dispatch.sql`
 
 3. Create storage buckets:
 ```bash
@@ -69,16 +77,20 @@ npm run worker:once
 
 ## Job lifecycle
 1. Client requests signed upload URL (`/api/upload/sign`) and pre-creates `jobs` row as `PENDING`.
-2. Client uploads video directly to Supabase Storage.
+2. Client uploads video directly to Supabase Storage at `uploads/{userId}/{jobId}.mp4`.
 3. Client confirms upload (`PATCH /api/jobs/:jobId`) to set `UPLOADED`.
-4. Worker claims next `UPLOADED` job, sets `PROCESSING`.
-5. Worker transcribes (Whisper), asks GPT for JSON segments, renders clips with FFmpeg, uploads to exports bucket.
-6. Worker inserts `job_exports`, marks job `DONE` or `FAILED`.
-7. Cleanup endpoint expires source uploads and old exports.
+4. User clicks Generate, app sets `READY_TO_PROCESS` and dispatches GitHub Actions (`repository_dispatch`).
+5. Actions runner calls `/api/internal/worker/start` (Bearer `WORKER_SECRET`) and claims the job as `PROCESSING`.
+6. Runner downloads source, transcribes (Whisper), selects segments (LLM), renders clips (FFmpeg), uploads exports.
+7. Runner calls `/api/internal/worker/finish` (or `/fail`) to finalize state.
+8. Cleanup endpoint expires source uploads and old exports.
 
 ## Internal endpoints
 - `POST /api/internal/worker-tick` (secret header `x-internal-secret`)
 - `POST /api/internal/cleanup` (secret header `x-internal-secret`)
+- `POST /api/internal/worker/start` (header `Authorization: Bearer $WORKER_SECRET`)
+- `POST /api/internal/worker/finish` (header `Authorization: Bearer $WORKER_SECRET`)
+- `POST /api/internal/worker/fail` (header `Authorization: Bearer $WORKER_SECRET`)
 
 Example cron call:
 ```bash
@@ -110,7 +122,8 @@ Manual publish pack only:
 ### Option A: Vercel + Supabase (quickest)
 - Deploy Next.js app on Vercel free tier.
 - Add all env vars in Vercel project settings.
-- Use Vercel Cron or external cron to call cleanup and worker tick endpoints.
+- Use Vercel Cron or external cron to call cleanup endpoint.
+- Use GitHub Actions (`.github/workflows/process-job.yml`) as worker runtime.
 - Best for low traffic and short jobs.
 
 ### Option B: Split worker when scale grows
@@ -118,6 +131,38 @@ Manual publish pack only:
 - Move worker process to cheap VPS or Cloud Run job.
 - Worker runs `npm run worker` continuously.
 - Keeps API latency stable while processing grows.
+
+## GitHub Actions worker setup
+Required GitHub repository secrets:
+- `WORKER_SECRET`
+- `INTERNAL_API_BASE_URL` (public API base URL, e.g. `https://yourapp.vercel.app`)
+- `OPENAI_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Dispatch configuration env vars (server-side in app host):
+- `GITHUB_OWNER`
+- `GITHUB_REPO`
+- `GITHUB_DISPATCH_TOKEN`
+
+`GITHUB_DISPATCH_TOKEN` should be a PAT with `repo` scope (fine-grained token with actions/repository dispatch permission is also acceptable).
+
+Manual local runner test:
+```bash
+JOB_ID=<uuid> \
+INTERNAL_API_BASE_URL=http://localhost:3000 \
+WORKER_SECRET=<secret> \
+OPENAI_API_KEY=<key> \
+SUPABASE_URL=<url> \
+SUPABASE_SERVICE_ROLE_KEY=<key> \
+pnpm worker:actions
+```
+
+Common troubleshooting:
+- `401 Unauthorized` on internal worker endpoints: check `WORKER_SECRET` on both app and Actions secrets.
+- Dispatch failure: verify PAT scope and `GITHUB_OWNER`/`GITHUB_REPO`.
+- `ffmpeg not found`: ensure workflow install step succeeded.
+- `Job could not be claimed`: job status was not `READY_TO_PROCESS`/`UPLOADED` or was already claimed.
 
 ## FFmpeg prerequisite
 `ffmpeg` must be available in runtime PATH for local and production worker containers.

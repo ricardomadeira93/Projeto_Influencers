@@ -32,7 +32,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const key = `${user.id}/${crypto.randomUUID()}-${parsed.data.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const jobId = crypto.randomUUID();
+  const key = `${user.id}/${jobId}.mp4`;
 
   const { data: signedData, error: signedErr } = await supabaseAdmin.storage
     .from("uploads")
@@ -42,7 +43,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: signedErr?.message || "Could not sign upload" }, { status: 500 });
   }
 
-  const jobId = await createJob({
+  await createJob({
+    jobId,
     userId: user.id,
     sourcePath: key,
     originalName: parsed.data.filename,

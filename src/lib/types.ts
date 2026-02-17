@@ -1,6 +1,7 @@
 export type JobStatus =
   | "PENDING"
   | "UPLOADED"
+  | "READY_TO_PROCESS"
   | "PROCESSING"
   | "DONE"
   | "FAILED"

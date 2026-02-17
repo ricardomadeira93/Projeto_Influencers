@@ -1,0 +1,43 @@
+name: Process Video Job
+
+on:
+  repository_dispatch:
+    types: [process_job]
+
+jobs:
+  process-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Run worker
+        env:
+          JOB_ID: ${{ github.event.client_payload.jobId }}
+          INTERNAL_API_BASE_URL: ${{ secrets.INTERNAL_API_BASE_URL }}
+          WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: pnpm worker:actions
