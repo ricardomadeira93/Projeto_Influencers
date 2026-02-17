@@ -29,13 +29,26 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const processingSteps = ["Transcribing", "Selecting clips", "Rendering exports"];
+const processingSteps = ["Transcribing", "Selecting clips", "Rendering exports"] as const;
+
+function stageLabel(stage?: string) {
+  if (!stage) return "";
+  return stage
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export function JobScreen({ jobId }: { jobId: string }) {
   const [status, setStatus] = useState("loading");
   const [clips, setClips] = useState<Clip[]>([]);
+  const [sourcePreviewUrl, setSourcePreviewUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [jobError, setJobError] = useState("");
+  const [processingStage, setProcessingStage] = useState("");
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [processingNote, setProcessingNote] = useState("");
   const [crop, setCrop] = useState({
     x: 0.72,
     y: 0.7,
@@ -47,7 +60,9 @@ export function JobScreen({ jobId }: { jobId: string }) {
 
   async function load() {
     setLoading(true);
-    const res = await fetch(`/api/jobs/${jobId}/suggest`, { headers: await authHeaders() });
+    setClips([]);
+    setSourcePreviewUrl("");
+    const res = await fetch(`/api/jobs/${jobId}/suggest`, { headers: await authHeaders(), cache: "no-store" });
     const data = await res.json();
     if (!res.ok) {
       setStatus(data.error || "error");
@@ -55,8 +70,17 @@ export function JobScreen({ jobId }: { jobId: string }) {
       return;
     }
     setStatus(data.job.status);
+    setJobError(data.job.error_message || "");
+    setProcessingStage(data.job.processing_stage || "");
+    setProcessingProgress(Number(data.job.processing_progress || 0));
+    setProcessingNote(data.job.processing_note || "");
     setClips(data.exports || []);
     if (data.job.crop_config) setCrop(data.job.crop_config);
+
+    const previewRes = await fetch(`/api/jobs/${jobId}/preview`, { headers: await authHeaders(), cache: "no-store" });
+    const previewData = await previewRes.json().catch(() => ({}));
+    if (previewRes.ok) setSourcePreviewUrl(previewData.previewUrl || "");
+
     setLoading(false);
   }
 
@@ -82,7 +106,7 @@ export function JobScreen({ jobId }: { jobId: string }) {
   }
 
   async function generate() {
-    setMessage("Queueing job...");
+    setMessage("Queueing video...");
     const res = await fetch(`/api/jobs/${jobId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
@@ -90,12 +114,16 @@ export function JobScreen({ jobId }: { jobId: string }) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setMessage(data.error || "Could not queue job");
-      toast.error(data.error || "Could not queue job");
+      const errMessage =
+        data?.code === "DISPATCH_FORBIDDEN"
+          ? "Processing trigger is misconfigured (GitHub token permissions)."
+          : data.error || "Could not queue video";
+      setMessage(errMessage);
+      toast.error(errMessage);
       return;
     }
-    setMessage("Job queued for processing.");
-    toast.success("Job queued");
+    setMessage("Video queued for processing.");
+    toast.success("Video queued");
     await load();
   }
 
@@ -110,18 +138,38 @@ export function JobScreen({ jobId }: { jobId: string }) {
     return () => clearInterval(t);
   }, [jobId]);
 
-  const activeStep = useMemo(() => {
-    if (status === "PROCESSING") return 2;
-    if (status === "DONE") return 3;
-    return 1;
-  }, [status]);
+  const stepStates = useMemo(() => {
+    if (status === "DONE") return ["done", "done", "done"] as const;
+    if (status === "PROCESSING") {
+      if (["DOWNLOADING_SOURCE", "EXTRACTING_AUDIO", "TRANSCRIBING", "QUEUED"].includes(processingStage)) {
+        return ["in_progress", "pending", "pending"] as const;
+      }
+      if (processingStage === "SELECTING_CLIPS") {
+        return ["done", "in_progress", "pending"] as const;
+      }
+      if (["RENDERING_EXPORTS", "UPLOADING_EXPORTS", "FINALIZING"].includes(processingStage)) {
+        return ["done", "done", "in_progress"] as const;
+      }
+      return ["in_progress", "pending", "pending"] as const;
+    }
+    if (status === "FAILED") return ["in_progress", "pending", "pending"] as const;
+    return ["pending", "pending", "pending"] as const;
+  }, [status, processingStage]);
+
+  const progressValue = useMemo(() => {
+    if (status === "DONE") return 100;
+    if (status === "PROCESSING" && processingProgress > 0) return Math.min(99, Math.max(1, processingProgress));
+    const doneCount = stepStates.filter((s) => s === "done").length;
+    const inProgressCount = stepStates.filter((s) => s === "in_progress").length;
+    return ((doneCount + inProgressCount * 0.5) / processingSteps.length) * 100;
+  }, [stepStates, processingProgress, status]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Job workspace</h1>
-          <p className="text-sm text-muted-foreground">Configure crop, start processing, and collect exports.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Video workspace</h1>
+          <p className="text-sm text-muted-foreground">Configure crop, start processing, and collect clip exports.</p>
         </div>
         <JobStatusBadge status={status} />
       </div>
@@ -133,9 +181,21 @@ export function JobScreen({ jobId }: { jobId: string }) {
             <CardDescription>Set webcam crop values before generation. Use decimal values from 0 to 1.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="rounded-lg border bg-muted/30 p-6">
-              <p className="text-sm text-muted-foreground">Preview placeholder</p>
-              <p className="mt-2 text-xs text-muted-foreground">Live crop preview can be plugged here later.</p>
+            <div className="rounded-lg border bg-muted/30 p-4">
+              {sourcePreviewUrl ? (
+                <video
+                  src={sourcePreviewUrl}
+                  controls
+                  preload="metadata"
+                  className="w-full rounded-md bg-black"
+                  aria-label="Source video preview"
+                />
+              ) : (
+                <div className="h-44 w-full rounded-md bg-muted" />
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Source preview helps validate framing before generating clips.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -175,6 +235,9 @@ export function JobScreen({ jobId }: { jobId: string }) {
               <Button onClick={generate}><WandSparkles className="mr-2 h-4 w-4" />Generate clips</Button>
             </div>
             {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
+            {status === "FAILED" && jobError ? (
+              <p className="text-sm text-destructive">Processing failed: {jobError}</p>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -184,12 +247,20 @@ export function JobScreen({ jobId }: { jobId: string }) {
             <CardDescription>Pipeline steps update while the worker runs.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Progress value={(activeStep / processingSteps.length) * 100} />
+            <Progress value={progressValue} />
+            {status === "PROCESSING" ? (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>Current step: {stageLabel(processingStage) || "Processing"}</p>
+                {processingNote ? <p>{processingNote}</p> : null}
+              </div>
+            ) : null}
             <ul className="space-y-2">
               {processingSteps.map((step, idx) => (
                 <li key={step} className="flex items-center justify-between text-sm">
                   <span>{step}</span>
-                  <span className="text-muted-foreground">{idx + 1 <= activeStep ? "done" : "pending"}</span>
+                  <span className="text-muted-foreground">
+                    {stepStates[idx] === "in_progress" ? "in progress" : stepStates[idx]}
+                  </span>
                 </li>
               ))}
             </ul>

@@ -90,17 +90,34 @@ export async function POST(request: NextRequest) {
   const nowIso = new Date().toISOString();
   const jobExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  await supabaseAdmin
+  const doneWithTelemetry = await supabaseAdmin
     .from("jobs")
     .update({
       status: "DONE",
       source_duration_sec: Math.round(parsed.data.measuredDurationSec),
+      processing_stage: "DONE",
+      processing_progress: 100,
+      processing_note: "Clip generation complete",
       finished_at: nowIso,
       expires_at: jobExpiresAt,
       updated_at: nowIso,
       suggestions: parsed.data.exports
     })
     .eq("id", job.id);
+
+  if (doneWithTelemetry.error?.message?.includes("processing_stage")) {
+    await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "DONE",
+        source_duration_sec: Math.round(parsed.data.measuredDurationSec),
+        finished_at: nowIso,
+        expires_at: jobExpiresAt,
+        updated_at: nowIso,
+        suggestions: parsed.data.exports
+      })
+      .eq("id", job.id);
+  }
 
   await consumeMinutes(job.user_id, usedMinutes, job.id);
 

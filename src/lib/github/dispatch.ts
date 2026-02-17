@@ -12,6 +12,7 @@ export async function dispatchProcessJob(jobId: string) {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
@@ -22,6 +23,9 @@ export async function dispatchProcessJob(jobId: string) {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`GitHub dispatch failed (${res.status}): ${body}`);
+    const acceptedPerms = res.headers.get("x-accepted-github-permissions");
+    throw new Error(
+      `GitHub dispatch failed (${res.status}): ${body}${acceptedPerms ? `; accepted_permissions=${acceptedPerms}` : ""}`
+    );
   }
 }

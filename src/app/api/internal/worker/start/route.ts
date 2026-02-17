@@ -60,18 +60,42 @@ export async function POST(request: NextRequest) {
 
   const nowIso = new Date().toISOString();
 
-  const { data: claimed } = await supabaseAdmin
-    .from("jobs")
-    .update({
-      status: "PROCESSING",
-      processing_started_at: nowIso,
-      updated_at: nowIso,
-      error_message: null
-    })
-    .eq("id", job.id)
-    .in("status", ["READY_TO_PROCESS", "UPLOADED"])
-    .select("id,user_id,status,crop_config,source_path,source_duration_sec,source_filename")
-    .maybeSingle();
+  let claimed: any = null;
+  {
+    const withTelemetry = await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "PROCESSING",
+        processing_started_at: nowIso,
+        processing_stage: "DOWNLOADING_SOURCE",
+        processing_progress: 5,
+        processing_note: "Worker started",
+        updated_at: nowIso,
+        error_message: null
+      })
+      .eq("id", job.id)
+      .in("status", ["READY_TO_PROCESS", "UPLOADED"])
+      .select("id,user_id,status,crop_config,source_path,source_duration_sec,source_filename")
+      .maybeSingle();
+
+    if (withTelemetry.error?.message?.includes("processing_stage")) {
+      const fallback = await supabaseAdmin
+        .from("jobs")
+        .update({
+          status: "PROCESSING",
+          processing_started_at: nowIso,
+          updated_at: nowIso,
+          error_message: null
+        })
+        .eq("id", job.id)
+        .in("status", ["READY_TO_PROCESS", "UPLOADED"])
+        .select("id,user_id,status,crop_config,source_path,source_duration_sec,source_filename")
+        .maybeSingle();
+      claimed = fallback.data;
+    } else {
+      claimed = withTelemetry.data;
+    }
+  }
 
   if (!claimed) {
     return NextResponse.json({ error: "Job could not be claimed" }, { status: 409 });

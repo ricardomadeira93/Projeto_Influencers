@@ -45,6 +45,9 @@ model Job {
   cropConfig        Json        @map("crop_config")
   suggestions       Json?
   errorMessage      String?     @map("error_message")
+  processingStage   String?     @map("processing_stage")
+  processingProgress Int        @default(0) @map("processing_progress")
+  processingNote    String?     @map("processing_note")
   processingStartedAt DateTime? @map("processing_started_at") @db.Timestamptz(6)
   finishedAt        DateTime?   @map("finished_at") @db.Timestamptz(6)
   dispatchRequestedAt DateTime? @map("dispatch_requested_at") @db.Timestamptz(6)

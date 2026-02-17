@@ -84,16 +84,24 @@ export function UploadWidget({ onUploaded }: UploadWidgetProps) {
             setProgress(pct);
           }
         };
-        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("Upload failed")));
+        xhr.onload = () =>
+          xhr.status >= 200 && xhr.status < 300
+            ? resolve()
+            : reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText || "unknown error"}`));
         xhr.onerror = () => reject(new Error("Upload failed"));
         xhr.send(file);
       });
 
-      await fetch(`/api/jobs/${signData.jobId}`, {
+      const markUploaded = await fetch(`/api/jobs/${signData.jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-        body: JSON.stringify({ status: "UPLOADED" })
+        body: JSON.stringify({ status: "UPLOADED" }),
+        cache: "no-store"
       });
+      const markUploadedData = await markUploaded.json().catch(() => ({}));
+      if (!markUploaded.ok) {
+        throw new Error(markUploadedData.error || "Upload saved, but job status update failed");
+      }
 
       setProgress(100);
       setMessage("Upload complete. Open the job and click Generate.");

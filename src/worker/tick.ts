@@ -99,43 +99,157 @@ function escapeForFilterPath(input: string) {
   return input.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+function getErrorMessage(err: unknown) {
+  if (err && typeof err === "object") {
+    const anyErr = err as any;
+    const message = anyErr.message || "Unknown error";
+    const code = anyErr.code || anyErr.cause?.code;
+    const status = anyErr.status || anyErr.cause?.status;
+    const causeMessage = anyErr.cause?.message;
+    const details = [code ? `code=${code}` : "", status ? `status=${status}` : "", causeMessage || ""]
+      .filter(Boolean)
+      .join(", ");
+    return details ? `${message} (${details})` : message;
+  }
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "Unknown error";
+}
+
+async function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetries<T>(label: string, fn: () => Promise<T>, attempts = 3) {
+  let lastError: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts) {
+        console.warn(`[worker] ${label} failed (attempt ${i}/${attempts}): ${getErrorMessage(err)}`);
+        await wait(400 * i);
+      }
+    }
+  }
+  throw new Error(`${label}: ${getErrorMessage(lastError)}`);
+}
+
+function isMissingTelemetryColumn(error: any) {
+  const message = error?.message || "";
+  return (
+    message.includes("processing_stage") ||
+    message.includes("processing_progress") ||
+    message.includes("processing_note")
+  );
+}
+
+async function updateJobTelemetry(jobId: string, stage: string, progress: number, note?: string) {
+  const nowIso = new Date().toISOString();
+  const withTelemetry = {
+    processing_stage: stage,
+    processing_progress: progress,
+    processing_note: note || null,
+    updated_at: nowIso
+  };
+  const { error } = await supabaseAdmin.from("jobs").update(withTelemetry).eq("id", jobId);
+  if (error && isMissingTelemetryColumn(error)) {
+    await supabaseAdmin.from("jobs").update({ updated_at: nowIso }).eq("id", jobId);
+  } else if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function updateJobFailed(jobId: string, message: string) {
+  const nowIso = new Date().toISOString();
+  const withTelemetry = {
+    status: "FAILED",
+    error_message: message,
+    processing_stage: "FAILED",
+    processing_progress: 0,
+    processing_note: message,
+    updated_at: nowIso
+  };
+  const { error } = await supabaseAdmin.from("jobs").update(withTelemetry).eq("id", jobId);
+  if (error && isMissingTelemetryColumn(error)) {
+    await supabaseAdmin
+      .from("jobs")
+      .update({ status: "FAILED", error_message: message, updated_at: nowIso })
+      .eq("id", jobId);
+  } else if (error) {
+    throw new Error(error.message);
+  }
+}
+
 async function processJob(job: any) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "splitshorts-"));
   const srcPath = path.join(tmpDir, "source.mp4");
+  const audioPath = path.join(tmpDir, "audio.m4a");
 
   try {
-    const { data: signedSource } = await supabaseAdmin.storage.from("uploads").createSignedUrl(job.source_path, 1800);
+    await updateJobTelemetry(job.id, "DOWNLOADING_SOURCE", 5, "Downloading uploaded source video");
+    const signedSource = await withRetries("sign source URL", async () => {
+      const { data, error } = await supabaseAdmin.storage.from("uploads").createSignedUrl(job.source_path, 1800);
+      if (error) throw new Error(error.message);
+      return data;
+    });
     if (!signedSource?.signedUrl) throw new Error("Missing source signed URL");
 
-    const sourceRes = await fetch(signedSource.signedUrl);
+    const sourceRes = await withRetries("download source", () => fetch(signedSource.signedUrl));
     if (!sourceRes.ok) throw new Error("Could not download source");
     await fs.writeFile(srcPath, Buffer.from(await sourceRes.arrayBuffer()));
 
-    const transcription = await openai.audio.transcriptions.create({
-      model: "whisper-1",
-      file: createReadStream(srcPath),
-      response_format: "verbose_json"
-    });
+    await updateJobTelemetry(job.id, "EXTRACTING_AUDIO", 15, "Extracting audio for transcription");
+    await withRetries("extract audio", () =>
+      runFfmpeg([
+        "-y",
+        "-i",
+        srcPath,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+        audioPath
+      ])
+    );
+
+    await updateJobTelemetry(job.id, "TRANSCRIBING", 30, "Transcribing audio");
+    const transcription = await withRetries("transcription", () =>
+      openai.audio.transcriptions.create({
+        model: "whisper-1",
+        file: createReadStream(audioPath),
+        response_format: "verbose_json"
+      })
+    );
 
     const transcriptText = (transcription as any).text || "";
     const segments = ((transcription as any).segments || []) as Array<{ start: number; end: number; text: string }>;
 
-    const suggestionsRaw = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      response_format: { type: "json_schema", json_schema: CLIP_SCHEMA },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You suggest the most shareable 20-60s shorts from tutorial transcripts. Return strict JSON matching schema."
-        },
-        {
-          role: "user",
-          content: `Video duration: ${job.source_duration_sec}s\nTranscript:\n${transcriptText.slice(0, 14000)}`
-        }
-      ]
-    });
+    await updateJobTelemetry(job.id, "SELECTING_CLIPS", 50, "Selecting best clip segments");
+    const suggestionsRaw = await withRetries("clip suggestion", () =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.2,
+        response_format: { type: "json_schema", json_schema: CLIP_SCHEMA },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You suggest the most shareable 20-60s shorts from tutorial transcripts. Return strict JSON matching schema."
+          },
+          {
+            role: "user",
+            content: `Video duration: ${job.source_duration_sec}s\nTranscript:\n${transcriptText.slice(0, 14000)}`
+          }
+        ]
+      })
+    );
 
     const content = suggestionsRaw.choices[0]?.message?.content || "{" + '"segments":[]' + "}";
     const parsed = JSON.parse(content) as { segments: ClipSuggestion[] };
@@ -151,6 +265,10 @@ async function processJob(job: any) {
     }) as CropConfig;
 
     for (const segment of clipped) {
+      const idx = clipped.findIndex((s) => s.clip_id === segment.clip_id);
+      const clipNum = idx + 1;
+      const renderProgress = Math.min(90, 60 + Math.round((clipNum / Math.max(1, clipped.length)) * 20));
+      await updateJobTelemetry(job.id, "RENDERING_EXPORTS", renderProgress, `Rendering clip ${clipNum}/${clipped.length}`);
       const dur = Math.max(1, segment.end - segment.start);
       const srtPath = path.join(tmpDir, `${segment.clip_id}.srt`);
       const outPath = path.join(tmpDir, `${segment.clip_id}.mp4`);
@@ -161,69 +279,105 @@ async function processJob(job: any) {
         `[0:v]scale=1080:960[bottom];` +
         `[top][bottom]vstack=inputs=2,subtitles='${escapeForFilterPath(srtPath)}':force_style='${captionStyle(crop.captionPreset)}'[v]`;
 
-      await runFfmpeg([
-        "-y",
-        "-ss",
-        String(segment.start),
-        "-t",
-        String(dur),
-        "-i",
-        srcPath,
-        "-filter_complex",
-        filter,
-        "-map",
-        "[v]",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-c:a",
-        "aac",
-        "-movflags",
-        "+faststart",
-        outPath
-      ]);
+      await withRetries(`render clip ${segment.clip_id}`, () =>
+        runFfmpeg([
+          "-y",
+          "-ss",
+          String(segment.start),
+          "-t",
+          String(dur),
+          "-i",
+          srcPath,
+          "-filter_complex",
+          filter,
+          "-map",
+          "[v]",
+          "-map",
+          "0:a?",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "23",
+          "-c:a",
+          "aac",
+          "-movflags",
+          "+faststart",
+          outPath
+        ])
+      );
 
       const clipPath = `${job.user_id}/${job.id}/${segment.clip_id}.mp4`;
       const bytes = await fs.readFile(outPath);
-      const { error: upErr } = await supabaseAdmin.storage.from("exports").upload(clipPath, bytes, {
-        contentType: "video/mp4",
-        upsert: true
+      await withRetries(`upload clip ${segment.clip_id}`, async () => {
+        await updateJobTelemetry(
+          job.id,
+          "UPLOADING_EXPORTS",
+          Math.min(95, renderProgress + 3),
+          `Uploading clip ${clipNum}/${clipped.length}`
+        );
+        const { error } = await supabaseAdmin.storage.from("exports").upload(clipPath, bytes, {
+          contentType: "video/mp4",
+          upsert: true
+        });
+        if (error) throw new Error(error.message);
       });
-      if (upErr) throw upErr;
 
-      const { data: urlData } = await supabaseAdmin.storage.from("exports").createSignedUrl(clipPath, 72 * 3600);
+      const urlData = await withRetries(`sign clip URL ${segment.clip_id}`, async () => {
+        const { data, error } = await supabaseAdmin.storage.from("exports").createSignedUrl(clipPath, 72 * 3600);
+        if (error) throw new Error(error.message);
+        return data;
+      });
+
       const hashtags = hashtagsForNiche(segment.title + " " + transcriptText.slice(0, 300));
-
-      await supabaseAdmin.from("job_exports").insert({
-        job_id: job.id,
-        user_id: job.user_id,
-        clip_id: segment.clip_id,
-        clip_path: clipPath,
-        clip_url: urlData?.signedUrl || "",
-        title: segment.title,
-        description: buildDescription(segment.hook, segment.reason),
-        hashtags,
-        hook: segment.hook,
-        reason: segment.reason,
-        provider_metadata: {
-          youtube: { title: segment.title, description: buildDescription(segment.hook, segment.reason) },
-          tiktok: { caption: `${segment.title} ${hashtags.join(" ")}` },
-          instagram: { caption: `${segment.hook}\n${hashtags.join(" ")}` },
-          x: { text: `${segment.title} ${hashtags.slice(0, 3).join(" ")}` }
-        },
-        expires_at: new Date(Date.now() + 72 * 3600 * 1000).toISOString()
+      await withRetries(`insert export metadata ${segment.clip_id}`, async () => {
+        const { error } = await supabaseAdmin.from("job_exports").insert({
+          job_id: job.id,
+          user_id: job.user_id,
+          clip_id: segment.clip_id,
+          clip_path: clipPath,
+          clip_url: urlData?.signedUrl || "",
+          title: segment.title,
+          description: buildDescription(segment.hook, segment.reason),
+          hashtags,
+          hook: segment.hook,
+          reason: segment.reason,
+          provider_metadata: {
+            youtube: { title: segment.title, description: buildDescription(segment.hook, segment.reason) },
+            tiktok: { caption: `${segment.title} ${hashtags.join(" ")}` },
+            instagram: { caption: `${segment.hook}\n${hashtags.join(" ")}` },
+            x: { text: `${segment.title} ${hashtags.slice(0, 3).join(" ")}` }
+          },
+          expires_at: new Date(Date.now() + 72 * 3600 * 1000).toISOString()
+        });
+        if (error) throw new Error(error.message);
       });
     }
 
-    await supabaseAdmin
-      .from("jobs")
-      .update({ status: "DONE", suggestions: clipped, updated_at: new Date().toISOString() })
-      .eq("id", job.id);
+    await updateJobTelemetry(job.id, "FINALIZING", 98, "Saving metadata and finishing");
+    await withRetries("mark job done", async () => {
+      const { error } = await supabaseAdmin
+        .from("jobs")
+        .update({
+          status: "DONE",
+          suggestions: clipped,
+          processing_stage: "DONE",
+          processing_progress: 100,
+          processing_note: "Clip generation complete",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", job.id);
+      if (error && isMissingTelemetryColumn(error)) {
+        const fallback = await supabaseAdmin
+          .from("jobs")
+          .update({ status: "DONE", suggestions: clipped, updated_at: new Date().toISOString() })
+          .eq("id", job.id);
+        if (fallback.error) throw new Error(fallback.error.message);
+        return;
+      }
+      if (error) throw new Error(error.message);
+    });
 
     await consumeMinutes(job.user_id, Math.ceil(job.source_duration_sec / 60), job.id);
 
@@ -238,23 +392,62 @@ export async function runWorkerTick() {
   const { data: jobs, error } = await supabaseAdmin
     .from("jobs")
     .select("*")
-    .eq("status", "UPLOADED")
-    .gt("expires_at", now)
+    .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
     .order("created_at", { ascending: true })
     .limit(1);
 
   if (error) return { processed: 0, error: error.message };
-  if (!jobs?.length) return { processed: 0 };
+  if (!jobs?.length) {
+    const { data: queued } = await supabaseAdmin
+      .from("jobs")
+      .select("status")
+      .in("status", ["PENDING", "UPLOADED", "READY_TO_PROCESS", "PROCESSING"])
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .limit(100);
+    const byStatus = (queued || []).reduce<Record<string, number>>((acc, row: any) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {});
+    return { processed: 0, queue: byStatus };
+  }
 
   const job = jobs[0];
 
-  const { data: claimed } = await supabaseAdmin
-    .from("jobs")
-    .update({ status: "PROCESSING", updated_at: now })
-    .eq("id", job.id)
-    .eq("status", "UPLOADED")
-    .select("id")
-    .maybeSingle();
+  let claimed: any = null;
+  {
+    const claimWithTelemetry = await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "PROCESSING",
+        processing_started_at: now,
+        processing_stage: "QUEUED",
+        processing_progress: 1,
+        processing_note: "Waiting for worker steps to start",
+        updated_at: now
+      })
+      .eq("id", job.id)
+      .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+      .select("id")
+      .maybeSingle();
+
+    if (claimWithTelemetry.error && isMissingTelemetryColumn(claimWithTelemetry.error)) {
+      const fallbackClaim = await supabaseAdmin
+        .from("jobs")
+        .update({
+          status: "PROCESSING",
+          processing_started_at: now,
+          updated_at: now
+        })
+        .eq("id", job.id)
+        .in("status", ["UPLOADED", "READY_TO_PROCESS"])
+        .select("id")
+        .maybeSingle();
+      claimed = fallbackClaim.data;
+    } else {
+      claimed = claimWithTelemetry.data;
+    }
+  }
 
   if (!claimed) return { processed: 0, skipped: "already claimed" };
 
@@ -262,11 +455,10 @@ export async function runWorkerTick() {
     const result = await processJob(job);
     return { processed: 1, jobId: job.id, ...result };
   } catch (err: any) {
-    await supabaseAdmin
-      .from("jobs")
-      .update({ status: "FAILED", error_message: err.message, updated_at: new Date().toISOString() })
-      .eq("id", job.id);
+    const message = getErrorMessage(err);
+    console.error(`[worker] job ${job.id} failed:`, err);
+    await updateJobFailed(job.id, message);
 
-    return { processed: 1, jobId: job.id, error: err.message };
+    return { processed: 1, jobId: job.id, error: message };
   }
 }

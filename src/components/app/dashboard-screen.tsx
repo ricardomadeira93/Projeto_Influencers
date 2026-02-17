@@ -18,6 +18,7 @@ type JobListItem = {
   id: string;
   status: string;
   source_filename: string;
+  preview_url?: string;
   created_at: string;
   expires_at: string;
 };
@@ -35,15 +36,19 @@ export function DashboardScreen() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
 
   async function loadJobs() {
-    if (!isAuthenticated) {
+    setLoading(true);
+    const headers = await authHeaders();
+    if (!headers.Authorization) {
+      setIsAuthenticated(false);
+      setJobs([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
-    const res = await fetch("/api/jobs", { headers: await authHeaders() });
+    const res = await fetch("/api/jobs", { headers, cache: "no-store" });
     if (res.status === 401) {
       setIsAuthenticated(false);
       setJobs([]);
@@ -57,14 +62,17 @@ export function DashboardScreen() {
 
   useEffect(() => {
     async function bootstrapAuth() {
-      const { data } = await supabaseBrowser.auth.getSession();
-      const hasSession = Boolean(data.session?.access_token);
-      setIsAuthenticated(hasSession);
-      setSessionLoading(false);
-      if (hasSession) {
-        loadJobs().catch(console.error);
-      } else {
-        setLoading(false);
+      try {
+        const { data } = await supabaseBrowser.auth.getSession();
+        const hasSession = Boolean(data.session?.access_token);
+        setIsAuthenticated(hasSession);
+        if (hasSession) {
+          await loadJobs();
+        } else {
+          setLoading(false);
+        }
+      } finally {
+        setSessionLoading(false);
       }
     }
 
@@ -81,15 +89,32 @@ export function DashboardScreen() {
     });
 
     return () => subscription.subscription.unsubscribe();
-  }, [isAuthenticated]);
+  }, []);
 
-  async function signInWithMagicLink() {
-    const origin = window.location.origin;
-    const { error } = await supabaseBrowser.auth.signInWithOtp({
+  async function signInWithPassword() {
+    const { error } = await supabaseBrowser.auth.signInWithPassword({
       email,
+      password
+    });
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    setAuthMessage("Signed in.");
+  }
+
+  async function signUpWithPassword() {
+    const origin = window.location.origin;
+    const { error } = await supabaseBrowser.auth.signUp({
+      email,
+      password,
       options: { emailRedirectTo: `${origin}/dashboard` }
     });
-    setAuthMessage(error ? error.message : "Magic link sent. Check your inbox.");
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    setAuthMessage("Account created. Check your email if confirmation is required.");
   }
 
   const filteredJobs = useMemo(() => {
@@ -121,7 +146,7 @@ export function DashboardScreen() {
         <CardHeader>
           <CardTitle>Sign in to continue</CardTitle>
           <CardDescription>
-            The dashboard is private. Use a magic link to access your uploads, job status, and exports.
+            The dashboard is private. Use a magic link to access your uploads, processing status, and exports.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -132,11 +157,23 @@ export function DashboardScreen() {
             onChange={(e) => setEmail(e.target.value)}
             aria-label="Email for magic link"
           />
-          <Button onClick={signInWithMagicLink} disabled={!email}>
-            Send magic link
-          </Button>
+          <Input
+            type="password"
+            placeholder="Your password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            aria-label="Password"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={signInWithPassword} disabled={!email || !password}>
+              Sign in
+            </Button>
+            <Button variant="secondary" onClick={signUpWithPassword} disabled={!email || !password}>
+              Create account
+            </Button>
+          </div>
           <p className="text-xs text-muted-foreground">
-            You will be redirected back to <code>/dashboard</code> after authentication.
+            Use email/password authentication for now. You can switch providers later in Supabase Auth settings.
           </p>
           {authMessage ? <p className="text-sm text-muted-foreground">{authMessage}</p> : null}
         </CardContent>
@@ -149,7 +186,7 @@ export function DashboardScreen() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Manage jobs, monitor status, and generate clips.</p>
+          <p className="text-sm text-muted-foreground">Manage videos, monitor status, and generate clips.</p>
         </div>
         <Button asChild>
           <a href="#new-video">New video</a>
@@ -164,7 +201,7 @@ export function DashboardScreen() {
         <Card>
           <CardContent className="flex items-center justify-between py-5">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Total jobs</p>
+              <p className="text-xs uppercase text-muted-foreground">Total videos</p>
               <p className="mt-1 text-2xl font-semibold">{jobs.length}</p>
             </div>
             <Film className="h-5 w-5 text-muted-foreground" />
@@ -201,7 +238,7 @@ export function DashboardScreen() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Jobs</CardTitle>
+          <CardTitle>Video processing</CardTitle>
           <CardDescription>Track each upload from pending to final clips.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -242,6 +279,7 @@ export function DashboardScreen() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[120px]">Preview</TableHead>
                   <TableHead>File</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
@@ -253,24 +291,38 @@ export function DashboardScreen() {
                 {loading ? (
                   <>
                     <TableRow>
-                      <TableCell colSpan={5}><Skeleton className="h-10 w-full" /></TableCell>
+                      <TableCell colSpan={6}><Skeleton className="h-10 w-full" /></TableCell>
                     </TableRow>
                     <TableRow>
-                      <TableCell colSpan={5}><Skeleton className="h-10 w-full" /></TableCell>
+                      <TableCell colSpan={6}><Skeleton className="h-10 w-full" /></TableCell>
                     </TableRow>
                   </>
                 ) : null}
 
                 {!loading && !filteredJobs.length ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                      No jobs found. Upload a video to create your first job.
+                    <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                      No videos found. Upload a video to create your first clip pipeline.
                     </TableCell>
                   </TableRow>
                 ) : null}
 
                 {filteredJobs.map((job) => (
                   <TableRow key={job.id}>
+                    <TableCell>
+                      {job.preview_url ? (
+                        <video
+                          src={job.preview_url}
+                          preload="metadata"
+                          muted
+                          playsInline
+                          className="h-16 w-24 rounded-md border bg-muted object-cover"
+                          aria-label={`Preview of ${job.source_filename}`}
+                        />
+                      ) : (
+                        <div className="h-16 w-24 rounded-md border bg-muted" />
+                      )}
+                    </TableCell>
                     <TableCell className="font-medium">{job.source_filename}</TableCell>
                     <TableCell><JobStatusBadge status={job.status} /></TableCell>
                     <TableCell>{new Date(job.created_at).toLocaleString()}</TableCell>

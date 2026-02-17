@@ -6,12 +6,29 @@ export async function GET(request: NextRequest, { params }: { params: { jobId: s
   const user = await getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: job, error: jobErr } = await supabaseAdmin
+  let job: any = null;
+  let jobErr: any = null;
+
+  const preferred = await supabaseAdmin
     .from("jobs")
-    .select("id,status,suggestions")
+    .select("id,status,suggestions,error_message,processing_stage,processing_progress,processing_note,crop_config")
     .eq("id", params.jobId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (preferred.error && preferred.error.message?.includes("processing_stage")) {
+    const fallback = await supabaseAdmin
+      .from("jobs")
+      .select("id,status,suggestions,error_message,crop_config")
+      .eq("id", params.jobId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    job = fallback.data;
+    jobErr = fallback.error;
+  } else {
+    job = preferred.data;
+    jobErr = preferred.error;
+  }
 
   if (jobErr || !job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

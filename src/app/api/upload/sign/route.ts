@@ -55,6 +55,8 @@ export async function POST(request: NextRequest) {
     jobId,
     path: key,
     token: signedData.token,
-    signedUrl: `${process.env.SUPABASE_URL}/storage/v1/object/upload/sign/uploads/${key}?token=${signedData.token}`
+    signedUrl: signedData.signedUrl.startsWith("http")
+      ? signedData.signedUrl
+      : new URL(signedData.signedUrl, process.env.SUPABASE_URL).toString()
   });
 }

@@ -21,16 +21,32 @@ export async function POST(request: NextRequest) {
   const nowIso = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  const { error } = await supabaseAdmin
+  let { error } = await supabaseAdmin
     .from("jobs")
     .update({
       status: "FAILED",
       error_message: parsed.data.errorMessage,
+      processing_stage: "FAILED",
+      processing_note: parsed.data.errorMessage,
       finished_at: nowIso,
       expires_at: expiresAt,
       updated_at: nowIso
     })
     .eq("id", parsed.data.jobId);
+
+  if (error?.message?.includes("processing_stage")) {
+    const fallback = await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "FAILED",
+        error_message: parsed.data.errorMessage,
+        finished_at: nowIso,
+        expires_at: expiresAt,
+        updated_at: nowIso
+      })
+      .eq("id", parsed.data.jobId);
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

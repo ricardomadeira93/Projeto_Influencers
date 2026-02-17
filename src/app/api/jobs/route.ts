@@ -8,10 +8,22 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("jobs")
-    .select("id, status, source_filename, created_at, updated_at, expires_at, crop_config")
+    .select("id, status, source_filename, source_path, created_at, updated_at, expires_at, crop_config")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ jobs: data });
+
+  const jobsWithPreview = await Promise.all(
+    (data || []).map(async (job) => {
+      let preview_url = "";
+      if (job.source_path) {
+        const { data: signed } = await supabaseAdmin.storage.from("uploads").createSignedUrl(job.source_path, 600);
+        preview_url = signed?.signedUrl || "";
+      }
+      return { ...job, preview_url };
+    })
+  );
+
+  return NextResponse.json({ jobs: jobsWithPreview });
 }
