@@ -10,6 +10,13 @@ export type WorkerJob = {
   sourceDurationSec: number;
   cropConfig: unknown;
   transcript: string | null;
+  clipStyle?: string | null;
+  genre?: string | null;
+  desiredClipCount?: number | null;
+  clipLengthMaxS?: number | null;
+  includeMomentText?: string | null;
+  timeframeStartS?: unknown;
+  timeframeEndS?: unknown;
   createdAt: Date;
   updatedAt: Date;
 };

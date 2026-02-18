@@ -11,7 +11,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobId: s
 
   const preferred = await supabaseAdmin
     .from("jobs")
-    .select("id,status,suggestions,error_message,processing_stage,processing_progress,processing_note,crop_config")
+    .select(
+      "id,status,suggestions,error_message,processing_stage,processing_progress,processing_note,crop_config,source_duration_sec,source_filename,clip_style,clip_length_max_s,timeframe_start_s,timeframe_end_s"
+    )
     .eq("id", params.jobId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -19,7 +21,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobId: s
   if (preferred.error && preferred.error.message?.includes("processing_stage")) {
     const fallback = await supabaseAdmin
       .from("jobs")
-      .select("id,status,suggestions,error_message,crop_config")
+      .select(
+        "id,status,suggestions,error_message,crop_config,source_duration_sec,source_filename,clip_style,clip_length_max_s,timeframe_start_s,timeframe_end_s"
+      )
       .eq("id", params.jobId)
       .eq("user_id", user.id)
       .maybeSingle();

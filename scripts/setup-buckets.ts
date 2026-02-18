@@ -34,13 +34,22 @@ const supabase = createClient(url, key, {
 });
 
 async function ensureBucket(name: string, isPublic: boolean) {
+  const fileSizeLimit = process.env.SUPABASE_BUCKET_FILE_SIZE_LIMIT || "500MB";
   const { data } = await supabase.storage.getBucket(name);
   if (!data) {
-    const { error } = await supabase.storage.createBucket(name, { public: isPublic });
+    const { error } = await supabase.storage.createBucket(name, {
+      public: isPublic,
+      fileSizeLimit
+    });
     if (error) throw error;
-    console.log(`created bucket ${name}`);
+    console.log(`created bucket ${name} (fileSizeLimit=${fileSizeLimit})`);
   } else {
-    console.log(`bucket exists ${name}`);
+    const { error } = await supabase.storage.updateBucket(name, {
+      public: isPublic,
+      fileSizeLimit
+    });
+    if (error) throw error;
+    console.log(`bucket exists ${name} (updated fileSizeLimit=${fileSizeLimit})`);
   }
 }
 

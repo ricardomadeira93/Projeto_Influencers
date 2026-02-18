@@ -17,6 +17,9 @@
 
   body {
     @apply antialiased;
+    background-image:
+      radial-gradient(1200px 800px at 12% -20%, hsl(var(--primary) / 0.09), transparent 55%),
+      radial-gradient(900px 700px at 88% -10%, hsl(var(--secondary) / 0.07), transparent 50%);
   }
 
   h1 {
@@ -38,6 +41,71 @@
   }
 
   .surface {
-    @apply rounded-lg border bg-card text-card-foreground shadow-sm;
+    @apply rounded-xl border bg-card text-card-foreground shadow-sm;
+  }
+
+  .surface-elevated {
+    @apply rounded-xl border bg-card text-card-foreground shadow-lg;
+  }
+
+  .hover-lift {
+    @apply transition-transform duration-200 ease-out will-change-transform;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-3px);
+  }
+
+  .pressable {
+    @apply transition-transform duration-150 ease-out;
+  }
+
+  .pressable:active {
+    transform: scale(0.98);
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+    transition:
+      opacity 600ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      transform 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .reveal.reveal-visible {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+
+  .hero-gradient {
+    animation: hero-gradient-shift 12s ease-in-out infinite alternate;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .hero-gradient {
+    animation: none !important;
+  }
+
+  .hover-lift:hover,
+  .pressable:active {
+    transform: none !important;
+  }
+}
+
+@keyframes hero-gradient-shift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.82;
+  }
+  100% {
+    transform: translate3d(-2.5%, 1.2%, 0) scale(1.04);
+    opacity: 1;
   }
 }

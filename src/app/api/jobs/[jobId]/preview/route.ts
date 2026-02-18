@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth";
 import { getJobForUser } from "@/lib/db";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isLocalSourcePath } from "@/lib/source-path";
 
 export async function GET(request: NextRequest, { params }: { params: { jobId: string } }) {
   const user = await getUserFromRequest(request);
@@ -9,6 +10,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobId: s
 
   const job = await getJobForUser(params.jobId, user.id);
   if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (isLocalSourcePath(job.source_path)) {
+    return NextResponse.json({ previewUrl: "" });
+  }
 
   const sourcePath = job.source_path || `${user.id}/${job.id}.mp4`;
   const { data, error } = await supabaseAdmin.storage.from("uploads").createSignedUrl(sourcePath, 600);

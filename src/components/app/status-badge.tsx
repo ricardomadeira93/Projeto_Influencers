@@ -1,6 +1,5 @@
-import { Badge } from "@/components/ui/badge";
-import { statusToBadgeVariant } from "@/components/app/status-utils";
+import { StatusChip } from "@/components/app/status-chip";
 
 export function JobStatusBadge({ status }: { status: string }) {
-  return <Badge variant={statusToBadgeVariant(status)}>{status.replaceAll("_", " ")}</Badge>;
+  return <StatusChip status={status} />;
 }

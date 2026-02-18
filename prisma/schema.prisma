@@ -31,6 +31,7 @@ model User {
   usageLogs        UsageLog[]
   publishTokens    PublishToken[]
   publishQueue     PublishQueue[]
+  templates        UserTemplate[]
 
   @@map("users")
 }
@@ -51,6 +52,16 @@ model Job {
   processingProgress Int        @default(0) @map("processing_progress")
   processingNote    String?     @map("processing_note")
   processingStartedAt DateTime? @map("processing_started_at") @db.Timestamptz(6)
+  clipStyle         String?      @map("clip_style")
+  genre             String?
+  desiredClipCount  Int?         @map("desired_clip_count")
+  clipLengthMaxS    Int?         @map("clip_length_max_s")
+  autoHook          Boolean?     @map("auto_hook")
+  includeMomentText String?      @map("include_moment_text")
+  timeframeStartS   Decimal?     @map("timeframe_start_s") @db.Decimal(10, 3)
+  timeframeEndS     Decimal?     @map("timeframe_end_s") @db.Decimal(10, 3)
+  presetId          String?      @map("preset_id")
+  templateId        String?      @map("template_id") @db.Uuid
   finishedAt        DateTime?   @map("finished_at") @db.Timestamptz(6)
   dispatchRequestedAt DateTime? @map("dispatch_requested_at") @db.Timestamptz(6)
   expiresAt         DateTime    @map("expires_at") @db.Timestamptz(6)
@@ -141,4 +152,16 @@ model PublishQueue {
   jobExport   JobExport @relation(fields: [jobExportId], references: [id], onDelete: Cascade)
 
   @@map("publish_queue")
+}
+
+model UserTemplate {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  config    Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_user_templates_user_created")
+  @@map("user_templates")
 }

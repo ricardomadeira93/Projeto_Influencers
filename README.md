@@ -8,13 +8,13 @@ macet.ai turns one tutorial video (webcam + screen in a single recording) into v
 - DB/Auth/Storage: Supabase
 - Queue: DB-backed `jobs` table (`PENDING`, `UPLOADED`, `READY_TO_PROCESS`, `PROCESSING`, `DONE`, `FAILED`, `EXPIRED`)
 - Worker: Local persistent Node worker (`worker/local-worker.ts`)
-- AI providers: `stub` / OpenAI Whisper / local `faster_whisper` (`TRANSCRIBE_PROVIDER`) and Ollama / OpenAI (`SEGMENT_PROVIDER`)
+- AI providers: `stub` or local `faster_whisper` (`TRANSCRIBE_PROVIDER`) and Ollama (`SEGMENT_PROVIDER`)
 
 ## Core MVP features
 - Signed upload URL flow
 - Preset output formats (Instagram Reels, YouTube Shorts, TikTok, Instagram Feed)
 - Split-screen vertical layout (Top webcam / Bottom screen)
-- Stylized caption burn-in presets (`BOLD`, `CLEAN`)
+- Stylized caption burn-in presets (`BOLD`, `CLEAN`, `MODERN`, `MINIMAL`)
 - LLM clip suggestions with strict JSON schema
 - Free-plan usage limit (default 60 minutes lifetime)
 - TTL cleanup: uploads 24h, exports 72h (`/api/internal/cleanup`)
@@ -44,8 +44,7 @@ CLIP_MIN_SECONDS=20
 CLIP_TARGET_SECONDS=26
 CLIP_MAX_SECONDS=30
 CLIP_MAX_COUNT=3
-# only required when using OpenAI providers
-OPENAI_API_KEY=
+CLIP_SELECTION_QUALITY=high
 FFMPEG_BIN=ffmpeg
 FREE_MINUTES_TOTAL=60
 MAX_UPLOAD_DURATION=1800
